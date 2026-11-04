@@ -11,9 +11,22 @@ const STATE = {
   photoDataUrl: null,       // 待上傳的照片 DataURL
   deleteTarget: null,       // 待刪除的記錄 ID
   durationTimer: null,      // 計時器 ID
+  gpsFix: null,             // 表單暫存的 { latitude, longitude }
+  watchId: null,            // 導航模式 watchPosition id
+  navMode: false,
+  distanceTimer: null,      // 首頁距離輪詢
+  voiceInside: false,       // 已在 30 公尺內提示過（離開後才再響）
+  lastVoiceAt: 0,
+  homeGeoErrorShown: false,
+  navGeoErrorShown: false,
+  voicesBound: false,
+  distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
 };
 
 const TABLE = 'parking_records';
+const ARRIVAL_METERS = 30;
+const VOICE_COOLDOWN_MS = 45000;
+const VOICE_EXIT_METERS = 38;
 
 // =========================================================
 // 工具函式
@@ -50,6 +63,47 @@ function formatDatetime(ts) {
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 解析座標；空值或非數字回傳 null */
+function parseCoord(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function hasCoords(record) {
+  if (!record) return false;
+  return parseCoord(record.latitude) != null && parseCoord(record.longitude) != null;
+}
+
+/** 兩點球面距離（公尺） */
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = deg => deg * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/** 公尺 / 公里 */
+function formatDistance(meters) {
+  if (!Number.isFinite(meters) || meters < 0) return '—';
+  if (meters < 1000) return `${Math.round(meters)} 公尺`;
+  const km = meters / 1000;
+  if (km >= 10) return `${Math.round(km)} 公里`;
+  const text = km.toFixed(1).replace(/\.0$/, '');
+  return `${text} 公里`;
+}
+
+function geoErrorMessage(err) {
+  const code = err && err.code;
+  if (code === 1) return '⚠️ 定位權限被拒絕，請允許瀏覽器使用位置';
+  if (code === 2) return '⚠️ 目前無法取得位置，請確認 GPS 已開啟';
+  if (code === 3) return '⚠️ 定位逾時，請再試一次';
+  return '⚠️ 定位失敗，請重試';
+}
+
 /** 點擊外部關閉下拉選單 */
 document.addEventListener('click', (e) => {
   const menu = document.getElementById('dropdown-menu');
@@ -80,6 +134,8 @@ function showScreen(name) {
     backBtn.classList.add('hidden');
   } else {
     backBtn.classList.remove('hidden');
+    stopNavMode({ silent: true });
+    stopHomeDistanceUpdates();
   }
 }
 
@@ -113,27 +169,37 @@ function toggleMenu() {
 
 async function refreshHome() {
   try {
+    const prevId = STATE.currentRecord && STATE.currentRecord.id;
     const res = await fetch(`tables/${TABLE}?sort=created_at&limit=100`);
     const json = await res.json();
     const active = (json.data || []).find(r => r.is_active === true || r.is_active === 'true');
     STATE.currentRecord = active || null;
 
+    if (STATE.navMode && (!active || active.id !== prevId)) {
+      stopNavMode({ silent: true });
+    }
+
     if (active) {
       renderCurrentCard(active);
       startDurationTimer(active.parked_at);
+      startHomeDistanceUpdates();
     } else {
       showPlaceholder();
       stopDurationTimer();
+      stopHomeDistanceUpdates();
     }
   } catch (e) {
     console.error(e);
     showPlaceholder();
+    stopHomeDistanceUpdates();
   }
 }
 
 function showPlaceholder() {
   document.getElementById('no-car-placeholder').classList.remove('hidden');
   document.getElementById('current-car-card').classList.add('hidden');
+  const row = document.getElementById('card-distance-row');
+  if (row) row.classList.add('hidden');
 }
 
 function renderCurrentCard(r) {
@@ -170,6 +236,19 @@ function renderCurrentCard(r) {
   } else {
     photoRow.classList.add('hidden');
   }
+
+  // 距離：沒有座標就隱藏；導航模式進行中不要把即時數字蓋成「計算中」
+  const distanceRow = document.getElementById('card-distance-row');
+  if (hasCoords(r)) {
+    distanceRow.classList.remove('hidden');
+    if (!STATE.navMode && STATE.distanceForId !== r.id) {
+      document.getElementById('card-distance').textContent = '計算中...';
+      STATE.distanceForId = r.id;
+    }
+  } else {
+    distanceRow.classList.add('hidden');
+    STATE.distanceForId = null;
+  }
 }
 
 function startDurationTimer(parkedAt) {
@@ -200,8 +279,56 @@ function resetForm() {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('.toggle-btn[data-value="car"]').classList.add('active');
   STATE.photoDataUrl = null;
+  STATE.gpsFix = null;
   document.getElementById('photo-preview-wrap').classList.add('hidden');
   document.getElementById('photo-upload-area').classList.remove('hidden');
+  const gpsStatus = document.getElementById('gps-status');
+  gpsStatus.textContent = '';
+  gpsStatus.classList.add('hidden');
+  const gpsBtn = document.getElementById('btn-get-location');
+  gpsBtn.disabled = false;
+  gpsBtn.classList.remove('is-ready');
+  gpsBtn.innerHTML = '<i class="fas fa-location-crosshairs"></i> 取得目前位置';
+}
+
+/** 取得目前位置，暫存緯度 / 經度，儲存時一併寫入 */
+function captureLocation() {
+  if (!navigator.geolocation) {
+    showToast('⚠️ 此裝置不支援定位功能', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btn-get-location');
+  btn.disabled = true;
+  btn.classList.remove('is-ready');
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 定位中...';
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      STATE.gpsFix = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      };
+      const status = document.getElementById('gps-status');
+      status.textContent = `已記錄 ${STATE.gpsFix.latitude.toFixed(6)}, ${STATE.gpsFix.longitude.toFixed(6)}`;
+      status.classList.remove('hidden');
+      btn.disabled = false;
+      btn.classList.add('is-ready');
+      btn.innerHTML = '<i class="fas fa-check"></i> 已取得位置';
+      showToast('📍 已記錄目前位置', 'success');
+    },
+    (err) => {
+      btn.disabled = false;
+      if (STATE.gpsFix) {
+        btn.classList.add('is-ready');
+        btn.innerHTML = '<i class="fas fa-check"></i> 已取得位置';
+      } else {
+        btn.innerHTML = '<i class="fas fa-location-crosshairs"></i> 取得目前位置';
+      }
+      showToast(geoErrorMessage(err), 'warning');
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+  );
 }
 
 function selectVehicleType(val, btn) {
@@ -261,6 +388,8 @@ async function saveRecord(e) {
       spot_number:   document.getElementById('input-spot').value.trim(),
       notes:         document.getElementById('input-notes').value.trim(),
       photo_url:     STATE.photoDataUrl || '',
+      latitude:      STATE.gpsFix ? STATE.gpsFix.latitude : null,
+      longitude:     STATE.gpsFix ? STATE.gpsFix.longitude : null,
       parked_at:     Date.now(),
       is_active:     true,
     };
@@ -321,9 +450,11 @@ async function markFound() {
       body: JSON.stringify({ is_active: false }),
     });
     showToast('🎉 太好了！希望您行車平安！', 'success', 3500);
+    stopNavMode({ silent: true });
     STATE.currentRecord = null;
     showPlaceholder();
     stopDurationTimer();
+    stopHomeDistanceUpdates();
   } catch(e) {
     showToast('❌ 更新失敗', 'error');
   }
@@ -337,14 +468,25 @@ function openNavigation() {
   const r = STATE.currentRecord;
   if (!r) return;
 
-  // 組合查詢字串
+  const lat = parseCoord(r.latitude);
+  const lng = parseCoord(r.longitude);
   const parts = [r.parking_lot, r.floor, r.zone, r.spot_number].filter(Boolean);
   const query = parts.length > 0 ? parts.join(' ') : '停車場';
-
-  // 嘗試 iOS Maps → Google Maps → 網頁版
   const encodedQuery = encodeURIComponent(query);
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const isAndroid = /Android/.test(navigator.userAgent);
+
+  // 有座標時優先用經緯度，避免只靠文字搜尋偏到別的停車場
+  if (lat != null && lng != null) {
+    if (isIOS) {
+      window.location.href = `maps://?daddr=${lat},${lng}&q=${encodedQuery}`;
+    } else if (isAndroid) {
+      window.location.href = `geo:${lat},${lng}?q=${lat},${lng}(${encodedQuery})`;
+    } else {
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+    }
+    return;
+  }
 
   if (isIOS) {
     window.location.href = `maps://?q=${encodedQuery}`;
@@ -492,9 +634,11 @@ async function executeDelete() {
 
     // 如果刪除的是 active 記錄，清空首頁
     if (STATE.currentRecord && STATE.currentRecord.id === id) {
+      stopNavMode({ silent: true });
       STATE.currentRecord = null;
       showPlaceholder();
       stopDurationTimer();
+      stopHomeDistanceUpdates();
     }
 
     // 刷新目前畫面
@@ -514,9 +658,11 @@ async function clearAllData() {
     for (const id of ids) {
       await fetch(`tables/${TABLE}/${id}`, { method: 'DELETE' });
     }
+    stopNavMode({ silent: true });
     STATE.currentRecord = null;
     showPlaceholder();
     stopDurationTimer();
+    stopHomeDistanceUpdates();
     showToast('🗑️ 所有記錄已清除', 'success');
     if (STATE.currentScreen !== 'home') showScreen('home');
   } catch(e) {
@@ -573,6 +719,243 @@ async function loadStats() {
 }
 
 // =========================================================
+// 距離與導航模式
+// =========================================================
+
+function startHomeDistanceUpdates() {
+  stopHomeDistanceUpdates();
+  if (STATE.navMode) return;
+  if (STATE.currentScreen !== 'home') return;
+  const record = STATE.currentRecord;
+  if (!record || !hasCoords(record)) return;
+  refreshHomeDistance();
+  STATE.distanceTimer = setInterval(refreshHomeDistance, 10000);
+}
+
+function stopHomeDistanceUpdates() {
+  if (STATE.distanceTimer) {
+    clearInterval(STATE.distanceTimer);
+    STATE.distanceTimer = null;
+  }
+}
+
+function refreshHomeDistance() {
+  const record = STATE.currentRecord;
+  if (!record || !hasCoords(record) || STATE.currentScreen !== 'home' || STATE.navMode) return;
+  if (!navigator.geolocation) {
+    document.getElementById('card-distance').textContent = '不支援定位';
+    return;
+  }
+  const recordId = record.id;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      if (!STATE.currentRecord || STATE.currentRecord.id !== recordId || STATE.navMode) return;
+      STATE.homeGeoErrorShown = false;
+      applyDistance(STATE.currentRecord, pos);
+    },
+    (err) => {
+      if (!STATE.homeGeoErrorShown) {
+        STATE.homeGeoErrorShown = true;
+        showToast(geoErrorMessage(err), 'warning');
+      }
+      const el = document.getElementById('card-distance');
+      if (el && STATE.currentRecord && STATE.currentRecord.id === recordId) {
+        el.textContent = '無法取得';
+      }
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+/** 把使用者位置與停車座標的距離寫到首頁卡片，回傳公尺 */
+function applyDistance(record, pos) {
+  const meters = haversineMeters(
+    pos.coords.latitude,
+    pos.coords.longitude,
+    parseCoord(record.latitude),
+    parseCoord(record.longitude)
+  );
+  const text = formatDistance(meters);
+  const cardEl = document.getElementById('card-distance');
+  const row = document.getElementById('card-distance-row');
+  if (row) row.classList.remove('hidden');
+  if (cardEl) cardEl.textContent = text;
+  return meters;
+}
+
+function toggleNavMode() {
+  if (STATE.navMode) stopNavMode();
+  else startNavMode();
+}
+
+function startNavMode() {
+  const record = STATE.currentRecord;
+  if (!record) return;
+  if (!hasCoords(record)) {
+    showToast('⚠️ 此記錄沒有 GPS 座標，請先取得位置再儲存', 'warning');
+    return;
+  }
+  if (!navigator.geolocation) {
+    showToast('⚠️ 此裝置不支援定位功能', 'warning');
+    return;
+  }
+
+  stopHomeDistanceUpdates();
+  if (STATE.watchId != null) {
+    navigator.geolocation.clearWatch(STATE.watchId);
+    STATE.watchId = null;
+  }
+
+  STATE.navMode = true;
+  STATE.voiceInside = false;
+  STATE.navGeoErrorShown = false;
+  bindSpeechVoices();
+  // 在點擊當下先講一句，解鎖 iOS 之後的 30 公尺提醒
+  unlockSpeech();
+
+  const panel = document.getElementById('nav-panel');
+  const card = document.getElementById('nav-panel-card');
+  panel.classList.remove('hidden');
+  card.classList.remove('is-near');
+  document.getElementById('nav-distance').textContent = '定位中...';
+  document.getElementById('nav-hint').textContent = '正在追蹤您與愛車的距離';
+
+  const btn = document.getElementById('btn-nav-mode');
+  if (btn) btn.innerHTML = '<i class="fas fa-location-arrow"></i> 結束導航模式';
+
+  const recordId = record.id;
+  STATE.watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (!STATE.navMode || !STATE.currentRecord || STATE.currentRecord.id !== recordId) return;
+      if (!hasCoords(STATE.currentRecord)) return;
+      const meters = applyDistance(STATE.currentRecord, pos);
+      updateNavPanel(meters);
+      maybeAnnounceArrival(meters);
+    },
+    (err) => {
+      if (!STATE.navMode) return;
+      // 權限拒絕或定位不可用就結束；逾時先保留追蹤，避免單次逾時關掉模式
+      if (err && (err.code === 1 || err.code === 2)) {
+        showToast(geoErrorMessage(err), 'warning');
+        STATE.homeGeoErrorShown = true;
+        stopNavMode({ silent: true });
+        return;
+      }
+      if (!STATE.navGeoErrorShown) {
+        STATE.navGeoErrorShown = true;
+        showToast(geoErrorMessage(err), 'warning');
+      }
+    },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+  );
+}
+
+function stopNavMode(opts) {
+  opts = opts || {};
+  const wasOn = STATE.navMode || STATE.watchId != null;
+  if (STATE.watchId != null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(STATE.watchId);
+  }
+  STATE.watchId = null;
+  STATE.navMode = false;
+  STATE.voiceInside = false;
+
+  const panel = document.getElementById('nav-panel');
+  if (panel) panel.classList.add('hidden');
+  const card = document.getElementById('nav-panel-card');
+  if (card) card.classList.remove('is-near');
+
+  const btn = document.getElementById('btn-nav-mode');
+  if (btn) btn.innerHTML = '<i class="fas fa-location-arrow"></i> 導航模式';
+
+  if (window.speechSynthesis) {
+    try { speechSynthesis.cancel(); } catch (err) { /* 忽略不支援的瀏覽器 */ }
+  }
+
+  if (wasOn && !opts.silent) showToast('導航模式已結束', 'info');
+  if (wasOn && STATE.currentScreen === 'home' && STATE.currentRecord && hasCoords(STATE.currentRecord)) {
+    startHomeDistanceUpdates();
+  }
+}
+
+function updateNavPanel(meters) {
+  const card = document.getElementById('nav-panel-card');
+  const hint = document.getElementById('nav-hint');
+  const distEl = document.getElementById('nav-distance');
+  if (distEl) distEl.textContent = formatDistance(meters);
+  if (meters <= ARRIVAL_METERS) {
+    if (card) card.classList.add('is-near');
+    if (hint) hint.textContent = '已進入 30 公尺內，請留意語音提醒';
+  } else {
+    if (card) card.classList.remove('is-near');
+    if (hint) hint.textContent = '接近 30 公尺時會自動語音提醒';
+  }
+}
+
+/** 進入 30 公尺說一次；離開 38 公尺後才重新武裝，並有冷卻時間 */
+function maybeAnnounceArrival(meters) {
+  if (!STATE.navMode) return;
+  if (meters > VOICE_EXIT_METERS) {
+    STATE.voiceInside = false;
+    return;
+  }
+  if (meters > ARRIVAL_METERS || STATE.voiceInside) return;
+  const now = Date.now();
+  STATE.voiceInside = true;
+  if (now - STATE.lastVoiceAt < VOICE_COOLDOWN_MS) return;
+  STATE.lastVoiceAt = now;
+  speakNearby(meters);
+}
+
+function bindSpeechVoices() {
+  if (!window.speechSynthesis || STATE.voicesBound) return;
+  STATE.voicesBound = true;
+  speechSynthesis.getVoices();
+  speechSynthesis.addEventListener('voiceschanged', () => {
+    speechSynthesis.getVoices();
+  });
+}
+
+function pickZhVoice() {
+  if (!window.speechSynthesis) return null;
+  const voices = speechSynthesis.getVoices() || [];
+  return voices.find(v => /zh[-_]TW/i.test(v.lang))
+    || voices.find(v => /zh[-_]Hant/i.test(v.lang))
+    || voices.find(v => /^zh/i.test(v.lang))
+    || null;
+}
+
+function unlockSpeech() {
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+  try {
+    const utter = new SpeechSynthesisUtterance('導航開始');
+    utter.lang = 'zh-TW';
+    const voice = pickZhVoice();
+    if (voice) utter.voice = voice;
+    speechSynthesis.speak(utter);
+  } catch (err) { /* 不支援語音時略過 */ }
+}
+
+function speakNearby(meters) {
+  const rounded = Math.max(1, Math.round(meters));
+  const text = `您已接近停車位置，距離約 ${rounded} 公尺。`;
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    showToast(`🔊 ${text}`, 'success', 4000);
+    return;
+  }
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'zh-TW';
+  const voice = pickZhVoice();
+  if (voice) utter.voice = voice;
+  utter.rate = 1;
+  try {
+    speechSynthesis.speak(utter);
+  } catch (err) {
+    showToast(`🔊 ${text}`, 'success', 4000);
+  }
+}
+
+// =========================================================
 // 照片燈箱
 // =========================================================
 
@@ -589,6 +972,7 @@ function closeLightbox() {
 // =========================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+  bindSpeechVoices();
   showScreen('home');
   refreshHome();
 
