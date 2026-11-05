@@ -84,6 +84,12 @@ function normalizeFloor(raw) {
   if (match) return String(Number(match[1])) + 'F';
   return text;
 }
+
+/** 車位編號只去前後空白，內容原樣保留。空字串代表沒填。 */
+function normalizeSpot(raw) {
+  return String(raw || '').trim();
+}
+
 const ARRIVAL_METERS = 30;
 const VOICE_COOLDOWN_MS = 45000;
 const VOICE_EXIT_METERS = 38;
@@ -296,23 +302,45 @@ async function parkHere() {
 function openFloorPrompt(id) {
   STATE.floorPromptId = id;
   const input = document.getElementById('input-park-floor');
+  const spotInput = document.getElementById('input-park-spot');
   input.value = '';
+  if (spotInput) spotInput.value = '';
   document.getElementById('floor-modal').classList.remove('hidden');
   input.focus();
 }
 
-function skipFloorPrompt() {
+function closeFloorPrompt() {
   STATE.floorPromptId = null;
   const modal = document.getElementById('floor-modal');
   if (modal) modal.classList.add('hidden');
+}
+
+/** 戶外或關掉視窗：樓層與車位都不記。 */
+function skipFloorPrompt() {
+  const id = STATE.floorPromptId;
+  if (id) {
+    try {
+      patchRecord(id, { floor: '', spot_number: '' });
+      if (STATE.currentRecord && STATE.currentRecord.id === id) {
+        STATE.currentRecord.floor = '';
+        STATE.currentRecord.spot_number = '';
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('❌ 儲存失敗，請重試', 'error');
+      return;
+    }
+  }
+  closeFloorPrompt();
 }
 
 function saveFloorPrompt(e) {
   if (e) e.preventDefault();
   const id = STATE.floorPromptId;
   const floor = normalizeFloor(document.getElementById('input-park-floor').value);
+  const spot = normalizeSpot(document.getElementById('input-park-spot').value);
   if (!id) {
-    skipFloorPrompt();
+    closeFloorPrompt();
     return;
   }
   if (!floor) {
@@ -320,29 +348,36 @@ function saveFloorPrompt(e) {
     return;
   }
   try {
-    patchRecord(id, { floor: floor });
+    patchRecord(id, { floor: floor, spot_number: spot });
     if (STATE.currentRecord && STATE.currentRecord.id === id) {
       STATE.currentRecord.floor = floor;
+      STATE.currentRecord.spot_number = spot;
     }
-    skipFloorPrompt();
-    showToast('✅ 已記下 ' + floor, 'success');
+    closeFloorPrompt();
+    showToast(spot ? '✅ 已記下 ' + floor + '，車位 ' + spot : '✅ 已記下 ' + floor, 'success');
   } catch (err) {
     console.error(err);
     showToast('❌ 儲存失敗，請重試', 'error');
   }
 }
 
-function showNavFloor(record) {
-  const el = document.getElementById('nav-floor');
+function showNavLine(id, text) {
+  const el = document.getElementById(id);
   if (!el) return;
-  const floor = record && record.floor ? String(record.floor).trim() : '';
-  if (!floor) {
+  if (!text) {
     el.textContent = '';
     el.classList.add('hidden');
     return;
   }
-  el.textContent = '樓層 ' + floor;
+  el.textContent = text;
   el.classList.remove('hidden');
+}
+
+function showNavFloor(record) {
+  const floor = record && record.floor ? String(record.floor).trim() : '';
+  const spot = record && record.spot_number ? String(record.spot_number).trim() : '';
+  showNavLine('nav-floor', floor ? '樓層 ' + floor : '');
+  showNavLine('nav-spot', spot ? '車位 ' + spot : '');
 }
 
 /** 找車：開啟已存位置、距離與語音導航 */
