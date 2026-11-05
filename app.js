@@ -122,26 +122,110 @@ function showScreen(name) {
   document.getElementById(`screen-${name}`).classList.add('active');
   STATE.currentScreen = name;
 
-  const backBtn = document.getElementById('btn-back');
+  const topNav = document.getElementById('top-nav');
   const titles = {
-    home: '🚗 停車小幫手',
-    save: '📍 記錄停車位置',
-    history: '📋 歷史記錄',
-    stats: '📊 使用統計',
+    home: '',
+    find: '找車',
+    save: '記錄停車位置',
+    history: '歷史記錄',
+    stats: '使用統計',
   };
-  document.getElementById('nav-title').textContent = titles[name] || '停車小幫手';
+  document.getElementById('nav-title').textContent = titles[name] || '';
+  document.getElementById('dropdown-menu').classList.add('hidden');
+
   if (name === 'home') {
-    backBtn.classList.add('hidden');
-  } else {
-    backBtn.classList.remove('hidden');
+    topNav.classList.add('hidden');
     stopNavMode({ silent: true });
     stopHomeDistanceUpdates();
+  } else {
+    topNav.classList.remove('hidden');
+    if (name !== 'find') {
+      stopNavMode({ silent: true });
+      stopHomeDistanceUpdates();
+    }
   }
 }
 
 function goBack() {
   showScreen('home');
-  refreshHome();
+}
+
+/** 一鍵停車：立刻定位並寫入停車點，不進表單 */
+async function parkHere() {
+  if (!navigator.geolocation) {
+    showToast('⚠️ 此裝置不支援定位功能', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btn-park');
+  const label = btn.querySelector('.gate-label');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  label.textContent = '定位中';
+
+  let pos = null;
+  try {
+    pos = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 0,
+      });
+    });
+  } catch (err) {
+    showToast(geoErrorMessage(err), 'warning');
+  }
+
+  if (!pos) {
+    btn.disabled = false;
+    label.textContent = '停車';
+    return;
+  }
+
+  try {
+    await deactivateAll();
+    const payload = {
+      vehicle_type: 'car',
+      license_plate: '',
+      parking_lot: '',
+      floor: '',
+      zone: '',
+      spot_number: '',
+      notes: '',
+      photo_url: '',
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
+      parked_at: Date.now(),
+      is_active: true,
+    };
+    const res = await fetch(`tables/${TABLE}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('save failed');
+    showToast('✅ 已記下停車位置', 'success');
+    refreshHome();
+  } catch (err) {
+    console.error(err);
+    showToast('❌ 儲存失敗，請重試', 'error');
+  } finally {
+    btn.disabled = false;
+    label.textContent = '停車';
+  }
+}
+
+/** 找車：開啟已存位置、距離與語音導航 */
+async function showFind() {
+  showScreen('find');
+  await refreshHome();
+  if (STATE.currentScreen !== 'find') return;
+  if (!STATE.currentRecord) {
+    showToast('尚未記錄停車位置', 'info');
+    return;
+  }
+  if (hasCoords(STATE.currentRecord)) startNavMode();
+  else showToast('⚠️ 這筆紀錄沒有 GPS 座標', 'warning');
 }
 
 function showSaveScreen() {
@@ -212,11 +296,16 @@ function renderCurrentCard(r) {
     ? '<i class="fas fa-motorcycle"></i>'
     : '<i class="fas fa-car"></i>';
 
-  document.getElementById('card-plate').textContent = r.license_plate || '未填寫';
-  document.getElementById('card-lot').textContent = r.parking_lot || '未填寫';
-  document.getElementById('card-floor').textContent = r.floor || '—';
-  document.getElementById('card-zone').textContent = r.zone || '—';
-  document.getElementById('card-spot').textContent = r.spot_number || '—';
+  document.getElementById('card-plate').textContent = r.license_plate || (hasCoords(r) ? '已記錄位置' : '未填寫');
+  setCardInfo('card-lot', r.parking_lot);
+  setCardInfo('card-floor', r.floor);
+  setCardInfo('card-zone', r.zone);
+  setCardInfo('card-spot', r.spot_number);
+  const infoGrid = document.querySelector('#current-car-card .card-info-grid');
+  if (infoGrid) {
+    const anyInfo = [...infoGrid.querySelectorAll('.info-item')].some(el => !el.classList.contains('hidden'));
+    infoGrid.classList.toggle('hidden', !anyInfo);
+  }
   document.getElementById('card-parked-at').textContent = r.parked_at ? formatDatetime(r.parked_at) : '';
 
   // 備註
@@ -249,6 +338,14 @@ function renderCurrentCard(r) {
     distanceRow.classList.add('hidden');
     STATE.distanceForId = null;
   }
+}
+
+function setCardInfo(id, value) {
+  const el = document.getElementById(id);
+  const item = el.closest('.info-item');
+  const text = value ? String(value).trim() : '';
+  el.textContent = text || '—';
+  item.classList.toggle('hidden', !text);
 }
 
 function startDurationTimer(parkedAt) {
@@ -606,8 +703,7 @@ function buildHistoryCard(r) {
 }
 
 function goToActiveRecord() {
-  showScreen('home');
-  refreshHome();
+  showFind();
 }
 
 // =========================================================
@@ -725,7 +821,7 @@ async function loadStats() {
 function startHomeDistanceUpdates() {
   stopHomeDistanceUpdates();
   if (STATE.navMode) return;
-  if (STATE.currentScreen !== 'home') return;
+  if (STATE.currentScreen !== 'find') return;
   const record = STATE.currentRecord;
   if (!record || !hasCoords(record)) return;
   refreshHomeDistance();
@@ -741,7 +837,7 @@ function stopHomeDistanceUpdates() {
 
 function refreshHomeDistance() {
   const record = STATE.currentRecord;
-  if (!record || !hasCoords(record) || STATE.currentScreen !== 'home' || STATE.navMode) return;
+  if (!record || !hasCoords(record) || STATE.currentScreen !== 'find' || STATE.navMode) return;
   if (!navigator.geolocation) {
     document.getElementById('card-distance').textContent = '不支援定位';
     return;
@@ -873,7 +969,7 @@ function stopNavMode(opts) {
   }
 
   if (wasOn && !opts.silent) showToast('導航模式已結束', 'info');
-  if (wasOn && STATE.currentScreen === 'home' && STATE.currentRecord && hasCoords(STATE.currentRecord)) {
+  if (wasOn && STATE.currentScreen === 'find' && STATE.currentRecord && hasCoords(STATE.currentRecord)) {
     startHomeDistanceUpdates();
   }
 }
@@ -978,6 +1074,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 每 30 秒自動刷新首頁
   setInterval(() => {
-    if (STATE.currentScreen === 'home') refreshHome();
+    if (STATE.currentScreen === 'find') refreshHome();
   }, 30000);
 });

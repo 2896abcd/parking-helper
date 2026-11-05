@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-TW" translate="no">
 <head>
   <meta charset="UTF-8" />
+  <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>停車小幫手 🚗</title>
 
@@ -17,12 +18,12 @@
   <!-- ===================== APP WRAPPER ===================== -->
   <div id="app">
 
-    <!-- ── 頂部導覽列 ── -->
-    <header id="top-nav">
-      <button id="btn-back" class="nav-btn hidden" onclick="goBack()">
+    <!-- ── 頂部導覽列（首頁不顯示） ── -->
+    <header id="top-nav" class="hidden">
+      <button id="btn-back" class="nav-btn" onclick="goBack()">
         <i class="fas fa-chevron-left"></i>
       </button>
-      <h1 id="nav-title">🚗 停車小幫手</h1>
+      <h1 id="nav-title">找車</h1>
       <button id="btn-menu" class="nav-btn" onclick="toggleMenu()">
         <i class="fas fa-ellipsis-v"></i>
       </button>
@@ -35,17 +36,28 @@
       <button onclick="clearAllData(); toggleMenu()"><i class="fas fa-trash-alt"></i> 清除所有記錄</button>
     </div>
 
-    <!-- ===================== 畫面：首頁 ===================== -->
+    <!-- ===================== 畫面：首頁（只有兩個按鈕） ===================== -->
     <main id="screen-home" class="screen active">
+      <div class="gate">
+        <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
+          <span class="gate-label">停車</span>
+        </button>
+        <button type="button" id="btn-find" class="gate-btn gate-find" onclick="showFind()">
+          <span class="gate-label">找車</span>
+        </button>
+      </div>
+    </main>
 
-      <!-- 目前停車狀態卡片 -->
+    <!-- ===================== 畫面：找車 ===================== -->
+    <main id="screen-find" class="screen">
+
       <section id="current-card-section">
         <div id="no-car-placeholder" class="placeholder-card">
           <div class="placeholder-icon">
-            <i class="fas fa-parking"></i>
+            <i class="fas fa-location-arrow"></i>
           </div>
-          <h2>尚未記錄停車位置</h2>
-          <p>點擊下方按鈕記錄您的停車資訊</p>
+          <h2>尚未停車</h2>
+          <p>請先按「停車」，會自動記下目前位置</p>
         </div>
 
         <!-- 目前停車卡 (隱藏，有資料時顯示) -->
@@ -137,14 +149,6 @@
           </div>
         </div>
       </section>
-
-      <!-- 快速記錄按鈕 -->
-      <div class="fab-area">
-        <button id="fab-save" class="fab" onclick="showSaveScreen()">
-          <i class="fas fa-plus"></i>
-          <span>記錄停車位</span>
-        </button>
-      </div>
 
     </main>
 
