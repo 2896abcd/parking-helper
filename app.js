@@ -21,6 +21,7 @@ const STATE = {
   navGeoErrorShown: false,
   voicesBound: false,
   distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
+  floorPromptId: null,      // 剛存好、等樓層的紀錄 id
 };
 
 const STORE_KEY = 'parking_records';
@@ -69,6 +70,19 @@ function deleteRecord(id) {
 
 function isActiveRecord(r) {
   return r.is_active === true || r.is_active === 'true';
+}
+
+/** 3 → 3F，B2 / -2 → B2。空字串代表不記樓層。 */
+function normalizeFloor(raw) {
+  const text = String(raw || '').trim().replace(/\s+/g, '');
+  if (!text) return '';
+  let match = text.match(/^b(\d+)$/i);
+  if (match) return 'B' + String(Number(match[1]));
+  match = text.match(/^-(\d+)$/);
+  if (match) return 'B' + String(Number(match[1]));
+  match = text.match(/^(\d+)f?$/i);
+  if (match) return String(Number(match[1])) + 'F';
+  return text;
 }
 const ARRIVAL_METERS = 30;
 const VOICE_COOLDOWN_MS = 45000;
@@ -266,9 +280,10 @@ async function parkHere() {
       parked_at: Date.now(),
       is_active: true,
     };
-    createRecord(payload);
+    const saved = createRecord(payload);
     showToast('✅ 已記下停車位置', 'success');
     refreshHome();
+    openFloorPrompt(saved.id);
   } catch (err) {
     console.error(err);
     showToast('❌ 儲存失敗，請重試', 'error');
@@ -276,6 +291,58 @@ async function parkHere() {
     btn.disabled = false;
     label.textContent = '停車';
   }
+}
+
+function openFloorPrompt(id) {
+  STATE.floorPromptId = id;
+  const input = document.getElementById('input-park-floor');
+  input.value = '';
+  document.getElementById('floor-modal').classList.remove('hidden');
+  input.focus();
+}
+
+function skipFloorPrompt() {
+  STATE.floorPromptId = null;
+  const modal = document.getElementById('floor-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function saveFloorPrompt(e) {
+  if (e) e.preventDefault();
+  const id = STATE.floorPromptId;
+  const floor = normalizeFloor(document.getElementById('input-park-floor').value);
+  if (!id) {
+    skipFloorPrompt();
+    return;
+  }
+  if (!floor) {
+    showToast('請輸入樓層，或選戶外不用樓層', 'info');
+    return;
+  }
+  try {
+    patchRecord(id, { floor: floor });
+    if (STATE.currentRecord && STATE.currentRecord.id === id) {
+      STATE.currentRecord.floor = floor;
+    }
+    skipFloorPrompt();
+    showToast('✅ 已記下 ' + floor, 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('❌ 儲存失敗，請重試', 'error');
+  }
+}
+
+function showNavFloor(record) {
+  const el = document.getElementById('nav-floor');
+  if (!el) return;
+  const floor = record && record.floor ? String(record.floor).trim() : '';
+  if (!floor) {
+    el.textContent = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.textContent = '樓層 ' + floor;
+  el.classList.remove('hidden');
 }
 
 /** 找車：開啟已存位置、距離與語音導航 */
@@ -959,6 +1026,7 @@ function startNavMode() {
   card.classList.remove('is-near');
   document.getElementById('nav-distance').textContent = '定位中...';
   document.getElementById('nav-hint').textContent = '正在追蹤您與愛車的距離';
+  showNavFloor(record);
 
   const btn = document.getElementById('btn-nav-mode');
   if (btn) btn.innerHTML = '<i class="fas fa-location-arrow"></i> 結束導航模式';
