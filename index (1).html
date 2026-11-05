@@ -10,7 +10,7 @@
   <!-- Font Awesome -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
 
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
@@ -102,6 +102,13 @@
             <span class="parked-at-text" id="card-parked-at"></span>
           </div>
 
+          <!-- 與停車位置的距離（有座標且取得定位時顯示） -->
+          <div id="card-distance-row" class="distance-row hidden">
+            <i class="fas fa-route"></i>
+            <span>距離愛車：</span>
+            <span id="card-distance" class="distance-text">計算中...</span>
+          </div>
+
           <!-- 備註 -->
           <div id="card-notes-row" class="notes-row hidden">
             <i class="fas fa-sticky-note"></i>
@@ -117,6 +124,9 @@
           <div class="card-actions">
             <button class="btn btn-navigate" onclick="openNavigation()">
               <i class="fas fa-directions"></i> 導航到我的車
+            </button>
+            <button class="btn btn-navmode" id="btn-nav-mode" onclick="toggleNavMode()">
+              <i class="fas fa-location-arrow"></i> 導航模式
             </button>
             <button class="btn btn-share" onclick="shareRecord()">
               <i class="fas fa-share-alt"></i> 分享位置
@@ -216,6 +226,15 @@
               <i class="fas fa-sticky-note input-icon"></i>
               <textarea id="input-notes" class="form-input form-textarea" placeholder="例：靠近電梯旁、柱子A3附近" rows="2"></textarea>
             </div>
+          </div>
+
+          <!-- GPS -->
+          <div class="form-group">
+            <label class="form-label">GPS 座標</label>
+            <button type="button" class="btn btn-gps btn-full" id="btn-get-location" onclick="captureLocation()">
+              <i class="fas fa-location-crosshairs"></i> 取得目前位置
+            </button>
+            <p id="gps-status" class="gps-status hidden"></p>
           </div>
 
           <!-- 拍照 -->
@@ -333,9 +352,32 @@
     </div>
   </div>
 
+  <!-- ===================== 導航模式 ===================== -->
+  <div id="nav-panel" class="nav-panel hidden" role="dialog" aria-labelledby="nav-panel-title">
+    <div class="nav-panel-card" id="nav-panel-card">
+      <div class="nav-panel-head">
+        <h3 id="nav-panel-title"><i class="fas fa-location-arrow"></i> 導航模式</h3>
+        <button type="button" class="nav-panel-close" onclick="stopNavMode()" aria-label="結束導航模式">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <p class="nav-distance-label">與愛車的距離</p>
+      <div class="nav-distance" id="nav-distance">定位中...</div>
+      <p class="nav-hint" id="nav-hint">接近 30 公尺時會以語音提醒</p>
+      <div class="nav-panel-actions">
+        <button type="button" class="btn btn-navigate btn-full" onclick="openNavigation()">
+          <i class="fas fa-directions"></i> 開啟地圖導航
+        </button>
+        <button type="button" class="btn btn-secondary btn-full" onclick="stopNavMode()">
+          結束導航模式
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== Toast 通知 ===================== -->
   <div id="toast" class="toast hidden"></div>
 
-  <script src="js/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
