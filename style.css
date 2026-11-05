@@ -135,35 +135,53 @@ img { max-width: 100%; display: block; }
 /* =========================================================
    首頁：停車 / 找車
    ========================================================= */
-#screen-home { padding: 0; }
-.gate {
-  height: 100dvh;
+#screen-home.screen.active {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  min-height: 100dvh;
+  padding: 0;
+}
+.home-title {
+  width: 100%;
+  margin: 0;
+  padding: max(28px, env(safe-area-inset-top)) 16px 0;
+  text-align: center;
+  font-size: 1.35rem;
+  font-weight: 900;
+  letter-spacing: .06em;
+  color: var(--text-primary);
+}
+.gate {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
   box-sizing: border-box;
-  padding:
-    max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
+  padding: 36px 16px max(28px, env(safe-area-inset-bottom));
 }
 .gate-btn {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  width: min(38vw, 156px);
+  height: min(38vw, 156px);
+  aspect-ratio: 1;
   border: none;
-  border-radius: 28px;
+  border-radius: 18px;
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 8px;
   -webkit-tap-highlight-color: transparent;
 }
 .gate-label {
-  font-size: clamp(3rem, 16vw, 4.5rem);
+  font-size: clamp(1.25rem, 5.4vw, 1.6rem);
   font-weight: 900;
   letter-spacing: .04em;
-  line-height: 1;
+  line-height: 1.2;
 }
 .gate-park { background: #4f46e5; }
 .gate-find { background: #0284c7; }
@@ -722,6 +740,19 @@ img { max-width: 100%; display: block; }
 .modal-box p { color: var(--text-secondary); font-size: .9rem; margin-bottom: 24px; }
 .modal-actions { display: flex; gap: 10px; }
 .modal-actions .btn { flex: 1; }
+.floor-input {
+  padding: 14px 12px;
+  text-align: center;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+.modal-box p.floor-hint {
+  font-size: .8rem;
+  color: var(--text-muted);
+  margin: 8px 0 16px;
+}
+.floor-actions { flex-direction: column; }
+.floor-actions .btn { width: 100%; }
 
 /* =========================================================
    導航模式
@@ -782,6 +813,13 @@ img { max-width: 100%; display: block; }
   color: var(--primary);
   letter-spacing: .5px;
   margin: 4px 0 8px;
+}
+.nav-floor {
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 8px;
 }
 .nav-panel-card.is-near .nav-distance { color: var(--success-dark); }
 .nav-hint {
