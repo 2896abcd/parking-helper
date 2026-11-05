@@ -150,6 +150,34 @@ function geoErrorMessage(err) {
   return '⚠️ 定位失敗，請重試';
 }
 
+function requestCurrentPosition(options) {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
+}
+
+/**
+ * 停車用：先要高精度。手機上 GPS 常逾時或暫時沒訊號，
+ * 那時改要較快的粗略定位（可沿用一分鐘內的快取），不要直接當成儲存失敗。
+ * 權限被拒不再重試。
+ */
+async function readParkPosition() {
+  try {
+    return await requestCurrentPosition({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    });
+  } catch (err) {
+    if (!err || err.code === 1) throw err;
+    return await requestCurrentPosition({
+      enableHighAccuracy: false,
+      timeout: 8000,
+      maximumAge: 60000,
+    });
+  }
+}
+
 /** 點擊外部關閉下拉選單 */
 document.addEventListener('click', (e) => {
   const menu = document.getElementById('dropdown-menu');
@@ -211,13 +239,7 @@ async function parkHere() {
 
   let pos = null;
   try {
-    pos = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 12000,
-        maximumAge: 0,
-      });
-    });
+    pos = await readParkPosition();
   } catch (err) {
     showToast(geoErrorMessage(err), 'warning');
   }
