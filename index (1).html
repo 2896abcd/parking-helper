@@ -369,6 +369,7 @@
       <p class="nav-distance-label">與愛車的距離</p>
       <div class="nav-distance" id="nav-distance">定位中...</div>
       <p id="nav-floor" class="nav-floor hidden"></p>
+      <p id="nav-spot" class="nav-spot hidden"></p>
       <p class="nav-hint" id="nav-hint">接近 30 公尺時會以語音提醒</p>
       <div class="nav-panel-actions">
         <button type="button" class="btn btn-navigate btn-full" onclick="openNavigation()">
@@ -381,15 +382,17 @@
     </div>
   </div>
 
-  <!-- ===================== 停車後只問樓層 ===================== -->
+  <!-- ===================== 停車後問樓層與車位 ===================== -->
   <div id="floor-modal" class="modal-overlay hidden" onclick="skipFloorPrompt()">
     <div class="modal-box" role="dialog" aria-labelledby="floor-modal-title" onclick="event.stopPropagation()">
       <h3 id="floor-modal-title">請問在停車場內嗎？</h3>
-      <p>戶外不用填。在停車場裡只記樓層。</p>
+      <p>戶外不用填。記樓層，車位可留空。</p>
       <form id="floor-form" onsubmit="saveFloorPrompt(event)">
         <label class="form-label" for="input-park-floor">樓層 F</label>
         <input id="input-park-floor" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="8" placeholder="3、B2 或 -2" />
         <p class="floor-hint">3 會記成 3F，B2 或 -2 會記成 B2</p>
+        <label class="form-label" for="input-park-spot">車位編號</label>
+        <input id="input-park-spot" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="20" placeholder="例：A12，可留空" />
         <div class="modal-actions floor-actions">
           <button type="submit" class="btn btn-primary">記下樓層</button>
           <button type="button" class="btn btn-secondary" onclick="skipFloorPrompt()">戶外，不用樓層</button>
