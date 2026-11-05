@@ -23,7 +23,53 @@ const STATE = {
   distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
 };
 
-const TABLE = 'parking_records';
+const STORE_KEY = 'parking_records';
+
+/** 停車紀錄存在這台裝置的 localStorage。靜態站沒有 tables API。 */
+function readRecords() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    const data = raw ? JSON.parse(raw) : [];
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.warn('readRecords', err);
+    return [];
+  }
+}
+
+function writeRecords(records) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(records));
+}
+
+function createRecord(payload) {
+  const now = Date.now();
+  const record = Object.assign({}, payload, {
+    id: `rec-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    created_at: now,
+    updated_at: now,
+  });
+  const records = readRecords();
+  records.push(record);
+  writeRecords(records);
+  return record;
+}
+
+function patchRecord(id, patch) {
+  const records = readRecords();
+  const rec = records.find(r => r.id === id);
+  if (!rec) throw new Error('record not found');
+  Object.assign(rec, patch, { updated_at: Date.now() });
+  writeRecords(records);
+  return rec;
+}
+
+function deleteRecord(id) {
+  writeRecords(readRecords().filter(r => r.id !== id));
+}
+
+function isActiveRecord(r) {
+  return r.is_active === true || r.is_active === 'true';
+}
 const ARRIVAL_METERS = 30;
 const VOICE_COOLDOWN_MS = 45000;
 const VOICE_EXIT_METERS = 38;
@@ -198,12 +244,7 @@ async function parkHere() {
       parked_at: Date.now(),
       is_active: true,
     };
-    const res = await fetch(`tables/${TABLE}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error('save failed');
+    createRecord(payload);
     showToast('✅ 已記下停車位置', 'success');
     refreshHome();
   } catch (err) {
@@ -254,9 +295,7 @@ function toggleMenu() {
 async function refreshHome() {
   try {
     const prevId = STATE.currentRecord && STATE.currentRecord.id;
-    const res = await fetch(`tables/${TABLE}?sort=created_at&limit=100`);
-    const json = await res.json();
-    const active = (json.data || []).find(r => r.is_active === true || r.is_active === 'true');
+    const active = readRecords().find(isActiveRecord) || null;
     STATE.currentRecord = active || null;
 
     if (STATE.navMode && (!active || active.id !== prevId)) {
@@ -491,11 +530,7 @@ async function saveRecord(e) {
       is_active:     true,
     };
 
-    await fetch(`tables/${TABLE}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    createRecord(payload);
 
     showToast('✅ 停車位置已儲存！', 'success');
     showScreen('home');
@@ -511,19 +546,19 @@ async function saveRecord(e) {
 }
 
 /** 將所有 active 記錄改為 inactive */
-async function deactivateAll() {
+function deactivateAll() {
   try {
-    const res = await fetch(`tables/${TABLE}?limit=200`);
-    const json = await res.json();
-    const actives = (json.data || []).filter(r => r.is_active === true || r.is_active === 'true');
-    for (const r of actives) {
-      await fetch(`tables/${TABLE}/${r.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: false }),
-      });
-    }
-  } catch(e) { console.warn('deactivateAll error', e); }
+    const records = readRecords();
+    let changed = false;
+    const now = Date.now();
+    records.forEach(r => {
+      if (!isActiveRecord(r)) return;
+      r.is_active = false;
+      r.updated_at = now;
+      changed = true;
+    });
+    if (changed) writeRecords(records);
+  } catch (e) { console.warn('deactivateAll error', e); }
 }
 
 // =========================================================
@@ -541,11 +576,7 @@ async function markFound() {
   closeFoundModal();
   if (!STATE.currentRecord) return;
   try {
-    await fetch(`tables/${TABLE}/${STATE.currentRecord.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_active: false }),
-    });
+    patchRecord(STATE.currentRecord.id, { is_active: false });
     showToast('🎉 太好了！希望您行車平安！', 'success', 3500);
     stopNavMode({ silent: true });
     STATE.currentRecord = null;
@@ -649,9 +680,7 @@ async function loadHistory() {
   container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>載入中...</p></div>';
 
   try {
-    const res = await fetch(`tables/${TABLE}?limit=200`);
-    const json = await res.json();
-    const records = (json.data || []).sort((a, b) => Number(b.created_at) - Number(a.created_at));
+    const records = readRecords().sort((a, b) => Number(b.created_at) - Number(a.created_at));
 
     document.getElementById('history-count').textContent = records.length;
 
@@ -668,7 +697,7 @@ async function loadHistory() {
 }
 
 function buildHistoryCard(r) {
-  const isActive = r.is_active === true || r.is_active === 'true';
+  const isActive = isActiveRecord(r);
   const plate = r.license_plate || '未填寫';
   const dateStr = formatDatetime(r.parked_at || r.created_at);
   const type = r.vehicle_type === 'motorcycle' ? 'motorcycle' : 'car';
@@ -725,7 +754,7 @@ async function executeDelete() {
   if (!id) return;
 
   try {
-    await fetch(`tables/${TABLE}/${id}`, { method: 'DELETE' });
+    deleteRecord(id);
     showToast('🗑️ 記錄已刪除', 'info');
 
     // 如果刪除的是 active 記錄，清空首頁
@@ -748,12 +777,7 @@ async function executeDelete() {
 async function clearAllData() {
   if (!confirm('確定要清除所有停車記錄嗎？此操作無法復原！')) return;
   try {
-    const res = await fetch(`tables/${TABLE}?limit=500`);
-    const json = await res.json();
-    const ids = (json.data || []).map(r => r.id);
-    for (const id of ids) {
-      await fetch(`tables/${TABLE}/${id}`, { method: 'DELETE' });
-    }
+    writeRecords([]);
     stopNavMode({ silent: true });
     STATE.currentRecord = null;
     showPlaceholder();
@@ -772,9 +796,7 @@ async function clearAllData() {
 
 async function loadStats() {
   try {
-    const res = await fetch(`tables/${TABLE}?limit=500`);
-    const json = await res.json();
-    const records = json.data || [];
+    const records = readRecords();
 
     // 基本統計
     document.getElementById('stat-total').textContent = records.length;
@@ -782,7 +804,7 @@ async function loadStats() {
     document.getElementById('stat-motos').textContent = records.filter(r => r.vehicle_type === 'motorcycle').length;
 
     // 平均停放時間（僅計算已完成的）
-    const done = records.filter(r => !(r.is_active === true || r.is_active === 'true') && r.parked_at && r.updated_at);
+    const done = records.filter(r => !isActiveRecord(r) && r.parked_at && r.updated_at);
     if (done.length > 0) {
       const avgMs = done.reduce((sum, r) => sum + (Number(r.updated_at) - Number(r.parked_at)), 0) / done.length;
       document.getElementById('stat-avg').textContent = formatDuration(avgMs);
