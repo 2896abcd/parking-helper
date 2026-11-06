@@ -39,18 +39,24 @@
     <!-- ===================== 畫面：首頁（兩個雙用途按鈕） ===================== -->
     <main id="screen-home" class="screen active">
       <h1 class="home-title">定位小幫手</h1>
-      <div class="gate">
-        <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
-          <span class="gate-label">停車定位</span>
-          <span class="gate-rule" aria-hidden="true"></span>
-          <span class="gate-sub">集合點定位</span>
-          <span class="gate-status">定位中</span>
-        </button>
-        <button type="button" id="btn-find" class="gate-btn gate-find" onclick="showFind()">
-          <span class="gate-label">找車導航</span>
-          <span class="gate-rule" aria-hidden="true"></span>
-          <span class="gate-sub">集合點導航</span>
-        </button>
+      <div class="home-actions">
+        <div class="gate">
+          <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
+            <span class="gate-label">停車定位</span>
+            <span class="gate-rule" aria-hidden="true"></span>
+            <span class="gate-sub">集合點定位</span>
+            <span class="gate-status">定位中</span>
+          </button>
+          <button type="button" id="btn-find" class="gate-btn gate-find" onclick="showFind()">
+            <span class="gate-label">找車導航</span>
+            <span class="gate-rule" aria-hidden="true"></span>
+            <span class="gate-sub">集合點導航</span>
+          </button>
+        </div>
+        <ol class="home-steps">
+          <li>按「停車定位」即可記下位置；<br>大樓停車可填樓層與車位編號。</li>
+          <li>回定位點時，導航預設為步行模式。</li>
+        </ol>
       </div>
     </main>
 
