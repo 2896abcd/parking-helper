@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="google" content="notranslate" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>停車小幫手 🚗</title>
+  <title>定位小幫手</title>
 
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&display=swap" rel="stylesheet" />
@@ -36,15 +36,20 @@
       <button onclick="clearAllData(); toggleMenu()"><i class="fas fa-trash-alt"></i> 清除所有記錄</button>
     </div>
 
-    <!-- ===================== 畫面：首頁（只有兩個按鈕） ===================== -->
+    <!-- ===================== 畫面：首頁（兩個雙用途按鈕） ===================== -->
     <main id="screen-home" class="screen active">
-      <h1 class="home-title">停車小幫手</h1>
+      <h1 class="home-title">定位小幫手</h1>
       <div class="gate">
         <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
-          <span class="gate-label">停車</span>
+          <span class="gate-label">停車定位</span>
+          <span class="gate-rule" aria-hidden="true"></span>
+          <span class="gate-sub">集合點定位</span>
+          <span class="gate-status">定位中</span>
         </button>
         <button type="button" id="btn-find" class="gate-btn gate-find" onclick="showFind()">
-          <span class="gate-label">找車</span>
+          <span class="gate-label">找車導航</span>
+          <span class="gate-rule" aria-hidden="true"></span>
+          <span class="gate-sub">集合點導航</span>
         </button>
       </div>
     </main>
@@ -57,8 +62,8 @@
           <div class="placeholder-icon">
             <i class="fas fa-location-arrow"></i>
           </div>
-          <h2>尚未停車</h2>
-          <p>請先按「停車」，會自動記下目前位置</p>
+          <h2>尚未定位</h2>
+          <p>請先按「停車定位」，會自動記下目前位置</p>
         </div>
 
         <!-- 目前停車卡 (隱藏，有資料時顯示) -->
