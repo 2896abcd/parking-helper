@@ -136,14 +136,65 @@ img { max-width: 100%; display: block; }
    首頁：停車定位 / 找車導航
    ========================================================= */
 #screen-home.screen.active {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   min-height: 100dvh;
   padding: max(28px, env(safe-area-inset-top)) 20px max(32px, env(safe-area-inset-bottom));
-  gap: 42px;
+  gap: 36px;
 }
+.home-title,
+.home-actions { position: relative; z-index: 1; }
+.home-decor {
+  position: absolute;
+  right: 10px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: 104px;
+  height: 84px;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .38;
+}
+.home-pin {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  width: 26px;
+  height: 34px;
+}
+.home-car {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 84px;
+  height: auto;
+  transform: rotate(-12deg);
+  transform-origin: 72% 78%;
+}
+.home-actions {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+.home-steps {
+  width: 100%;
+  margin: 0;
+  padding: 0 2px 0 1.4rem;
+  list-style: decimal;
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: .92rem;
+  font-weight: 500;
+  line-height: 1.6;
+}
+.home-steps li { padding-left: .15rem; }
+.home-steps li + li { margin-top: 8px; }
 .home-title {
   width: 100%;
   margin: 0;
