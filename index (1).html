@@ -41,27 +41,30 @@
       <div class="home-decor" aria-hidden="true">
         <svg class="home-pin" viewBox="0 0 32 42" focusable="false">
           <path d="M16 1.8C8.8 1.8 3.2 7.3 3.2 14.3 3.2 23.4 16 40.2 16 40.2S28.8 23.4 28.8 14.3C28.8 7.3 23.2 1.8 16 1.8z" fill="#0284c7"/>
-          <circle cx="16" cy="14.2" r="4.6" fill="#f5f3ff"/>
+          <circle cx="16" cy="14.2" r="4.4" fill="#f5f3ff"/>
         </svg>
-        <svg class="home-car" viewBox="0 0 96 48" focusable="false">
-          <ellipse cx="48" cy="43" rx="32" ry="3.2" fill="#4f46e5"/>
-          <path d="M16 33.5v-4.2c0-1.4 1-2.6 2.4-2.8l10.2-1.2 7.4-9.2A6 6 0 0 1 41 13.5h20.2a6 6 0 0 1 4.8 2.4l8.2 10.2 9.2 1.1c1.6.2 2.8 1.6 2.8 3.2V33" fill="#4f46e5" fill-opacity=".12" stroke="#4f46e5" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
-          <path d="M39.2 17.2h19.4l5.6 8.2H33.8l5.4-8.2z" fill="#0284c7" fill-opacity=".28" stroke="#4f46e5" stroke-width="1.6" stroke-linejoin="round"/>
-          <circle cx="32" cy="34.2" r="6" fill="#f5f3ff" stroke="#4f46e5" stroke-width="2.4"/>
-          <circle cx="72" cy="34.2" r="6" fill="#f5f3ff" stroke="#4f46e5" stroke-width="2.4"/>
-          <circle cx="32" cy="34.2" r="2" fill="#4f46e5"/>
-          <circle cx="72" cy="34.2" r="2" fill="#4f46e5"/>
+        <svg class="home-car" viewBox="0 0 120 58" focusable="false">
+          <ellipse cx="60" cy="52" rx="38" ry="3" fill="#4338ca"/>
+          <path d="M16 42c0-2.2 1.6-4 3.8-4.2l14-1.2 9.2-11.2A8 8 0 0 1 49.4 21h27.2a8 8 0 0 1 6.3 3.1L93 35.2l12.2 1.1c2.4.2 4.2 2.2 4.2 4.6V42c0 2.2-1.8 4-4 4H20c-2.2 0-4-1.8-4-4z" fill="#4f46e5"/>
+          <path d="M50.5 25.2h25.2l6.4 9.2H44.2l6.3-9.2z" fill="#e0e7ff"/>
+          <circle cx="40" cy="44" r="7" fill="#f8f7ff" stroke="#312e81" stroke-width="2.2"/>
+          <circle cx="86" cy="44" r="7" fill="#f8f7ff" stroke="#312e81" stroke-width="2.2"/>
+          <circle cx="40" cy="44" r="2.1" fill="#4338ca"/>
+          <circle cx="86" cy="44" r="2.1" fill="#4338ca"/>
         </svg>
       </div>
       <h1 class="home-title">定位小幫手</h1>
       <div class="home-actions">
         <div class="gate">
-          <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
-            <span class="gate-label">停車定位</span>
-            <span class="gate-rule" aria-hidden="true"></span>
-            <span class="gate-sub">集合點定位</span>
-            <span class="gate-status">定位中</span>
-          </button>
+          <div class="gate-stack">
+            <button type="button" id="btn-park" class="gate-btn gate-park" onclick="parkHere()">
+              <span class="gate-label">停車定位</span>
+              <span class="gate-rule" aria-hidden="true"></span>
+              <span class="gate-sub">集合點定位</span>
+              <span class="gate-status">定位中</span>
+            </button>
+            <button type="button" id="btn-cancel-loc" class="cancel-loc" onclick="askCancelLocation()" disabled>取消定位</button>
+          </div>
           <button type="button" id="btn-find" class="gate-btn gate-find" onclick="showFind()">
             <span class="gate-label">找車導航</span>
             <span class="gate-rule" aria-hidden="true"></span>
@@ -355,6 +358,18 @@
   <!-- ===================== 燈箱：照片大圖 ===================== -->
   <div id="photo-lightbox" class="lightbox hidden" onclick="closeLightbox()">
     <img id="lightbox-img" src="" alt="停車位照片" />
+  </div>
+
+  <!-- ===================== 取消目前定位 ===================== -->
+  <div id="cancel-loc-modal" class="modal-overlay hidden">
+    <div class="modal-box" role="dialog" aria-labelledby="cancel-loc-title">
+      <h3 id="cancel-loc-title">取消目前的定位？</h3>
+      <p>會清掉這次記下的位置、樓層與車位，之後無法導航回去。其他歷史不會被清掉。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeCancelLocation()">保留</button>
+        <button type="button" class="btn btn-danger" onclick="confirmCancelLocation()">確定取消</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===================== 確認找到彈窗 ===================== -->

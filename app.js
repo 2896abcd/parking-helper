@@ -22,6 +22,7 @@ const STATE = {
   voicesBound: false,
   distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
   floorPromptId: null,      // 剛存好、等樓層的紀錄 id
+  parkSeq: 0,               // 停車定位序號；取消後舊的 GPS 回呼作廢
 };
 
 const STORE_KEY = 'parking_records';
@@ -253,6 +254,7 @@ async function parkHere() {
 
   const btn = document.getElementById('btn-park');
   if (btn.disabled) return;
+  const ticket = ++STATE.parkSeq;
   btn.disabled = true;
   btn.classList.add('is-locating');
 
@@ -260,7 +262,14 @@ async function parkHere() {
   try {
     pos = await readParkPosition();
   } catch (err) {
-    showToast(geoErrorMessage(err), 'warning');
+    if (ticket === STATE.parkSeq) showToast(geoErrorMessage(err), 'warning');
+  }
+
+  if (ticket !== STATE.parkSeq) {
+    btn.disabled = false;
+    btn.classList.remove('is-locating');
+    syncCancelLocationButton();
+    return;
   }
 
   if (!pos) {
@@ -271,6 +280,7 @@ async function parkHere() {
 
   try {
     await deactivateAll();
+    if (ticket !== STATE.parkSeq) return;
     const payload = {
       vehicle_type: 'car',
       license_plate: '',
@@ -286,6 +296,10 @@ async function parkHere() {
       is_active: true,
     };
     const saved = createRecord(payload);
+    if (ticket !== STATE.parkSeq) {
+      writeRecords(readRecords().filter(r => r.id !== saved.id));
+      return;
+    }
     showToast('✅ 已記下目前位置', 'success');
     refreshHome();
     openFloorPrompt(saved.id);
@@ -312,6 +326,55 @@ function closeFloorPrompt() {
   STATE.floorPromptId = null;
   const modal = document.getElementById('floor-modal');
   if (modal) modal.classList.add('hidden');
+}
+
+function hasActiveLocation() {
+  return readRecords().some(isActiveRecord);
+}
+
+function syncCancelLocationButton() {
+  const btn = document.getElementById('btn-cancel-loc');
+  if (!btn) return;
+  const has = hasActiveLocation();
+  btn.disabled = !has;
+  btn.setAttribute('aria-disabled', has ? 'false' : 'true');
+}
+
+function askCancelLocation() {
+  if (!hasActiveLocation()) {
+    syncCancelLocationButton();
+    showToast('目前沒有已存的定位', 'info');
+    return;
+  }
+  document.getElementById('cancel-loc-modal').classList.remove('hidden');
+}
+
+function closeCancelLocation() {
+  const modal = document.getElementById('cancel-loc-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/** 只刪除目前活動定位，其他歷史原樣留下。 */
+function removeActiveLocations() {
+  const records = readRecords();
+  const kept = records.filter(r => !isActiveRecord(r));
+  const removed = records.length - kept.length;
+  if (removed) writeRecords(kept);
+  return removed;
+}
+
+function confirmCancelLocation() {
+  closeCancelLocation();
+  STATE.parkSeq += 1;
+  closeFloorPrompt();
+  stopNavMode({ silent: true });
+  stopHomeDistanceUpdates();
+  stopDurationTimer();
+  const removed = removeActiveLocations();
+  STATE.currentRecord = null;
+  refreshHome();
+  syncCancelLocationButton();
+  showToast(removed ? '已取消目前定位' : '目前沒有已存的定位', 'info');
 }
 
 /** 戶外或關掉視窗：樓層與車位都不記。 */
@@ -439,6 +502,7 @@ async function refreshHome() {
     showPlaceholder();
     stopHomeDistanceUpdates();
   }
+  syncCancelLocationButton();
 }
 
 function showPlaceholder() {
@@ -706,6 +770,7 @@ async function markFound() {
     showPlaceholder();
     stopDurationTimer();
     stopHomeDistanceUpdates();
+    syncCancelLocationButton();
   } catch(e) {
     showToast('❌ 更新失敗', 'error');
   }
@@ -1150,7 +1215,7 @@ function updateNavPanel(meters) {
 
 /** 進入 30 公尺說一次；離開 38 公尺後才重新武裝，並有冷卻時間 */
 function maybeAnnounceArrival(meters) {
-  if (!STATE.navMode) return;
+  if (!STATE.navMode || !STATE.currentRecord) return;
   if (meters > VOICE_EXIT_METERS) {
     STATE.voiceInside = false;
     return;
