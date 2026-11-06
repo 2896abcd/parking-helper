@@ -219,7 +219,7 @@ function showScreen(name) {
   const topNav = document.getElementById('top-nav');
   const titles = {
     home: '',
-    find: '找車',
+    find: '找車導航',
     save: '記錄停車位置',
     history: '歷史記錄',
     stats: '使用統計',
@@ -252,10 +252,9 @@ async function parkHere() {
   }
 
   const btn = document.getElementById('btn-park');
-  const label = btn.querySelector('.gate-label');
   if (btn.disabled) return;
   btn.disabled = true;
-  label.textContent = '定位中';
+  btn.classList.add('is-locating');
 
   let pos = null;
   try {
@@ -266,7 +265,7 @@ async function parkHere() {
 
   if (!pos) {
     btn.disabled = false;
-    label.textContent = '停車';
+    btn.classList.remove('is-locating');
     return;
   }
 
@@ -287,7 +286,7 @@ async function parkHere() {
       is_active: true,
     };
     const saved = createRecord(payload);
-    showToast('✅ 已記下停車位置', 'success');
+    showToast('✅ 已記下目前位置', 'success');
     refreshHome();
     openFloorPrompt(saved.id);
   } catch (err) {
@@ -295,7 +294,7 @@ async function parkHere() {
     showToast('❌ 儲存失敗，請重試', 'error');
   } finally {
     btn.disabled = false;
-    label.textContent = '停車';
+    btn.classList.remove('is-locating');
   }
 }
 
@@ -716,6 +715,37 @@ async function markFound() {
 // 導航功能
 // =========================================================
 
+function mapPlatform(ua) {
+  const text = ua == null ? navigator.userAgent : String(ua);
+  if (/iPad|iPhone|iPod/.test(text)) return 'ios';
+  if (/Android/.test(text)) return 'android';
+  return 'web';
+}
+
+/**
+ * 外部地圖一律步行。
+ * iOS Apple Maps：dirflg=w
+ * Android Google 導航：mode=w
+ * 網頁 Google Maps：travelmode=walking
+ */
+function buildWalkingNavUrl(lat, lng, label, platform) {
+  const hasCoords = lat != null && lng != null && lat !== '' && lng !== '';
+  const name = label && String(label).trim() ? String(label).trim() : '定位點';
+  const encoded = encodeURIComponent(name);
+  if (platform === 'ios') {
+    if (hasCoords) return `maps://?daddr=${lat},${lng}&q=${encoded}&dirflg=w`;
+    return `maps://?daddr=${encoded}&dirflg=w`;
+  }
+  if (platform === 'android') {
+    if (hasCoords) return `google.navigation:q=${lat},${lng}&mode=w`;
+    return `google.navigation:q=${encoded}&mode=w`;
+  }
+  if (hasCoords) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=walking`;
+  }
+  return `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=walking`;
+}
+
 function openNavigation() {
   const r = STATE.currentRecord;
   if (!r) return;
@@ -723,30 +753,13 @@ function openNavigation() {
   const lat = parseCoord(r.latitude);
   const lng = parseCoord(r.longitude);
   const parts = [r.parking_lot, r.floor, r.zone, r.spot_number].filter(Boolean);
-  const query = parts.length > 0 ? parts.join(' ') : '停車場';
-  const encodedQuery = encodeURIComponent(query);
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const isAndroid = /Android/.test(navigator.userAgent);
-
-  // 有座標時優先用經緯度，避免只靠文字搜尋偏到別的停車場
-  if (lat != null && lng != null) {
-    if (isIOS) {
-      window.location.href = `maps://?daddr=${lat},${lng}&q=${encodedQuery}`;
-    } else if (isAndroid) {
-      window.location.href = `geo:${lat},${lng}?q=${lat},${lng}(${encodedQuery})`;
-    } else {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
-    }
+  const query = parts.length > 0 ? parts.join(' ') : '定位點';
+  const url = buildWalkingNavUrl(lat, lng, query, mapPlatform());
+  if (mapPlatform() === 'web') {
+    window.open(url, '_blank');
     return;
   }
-
-  if (isIOS) {
-    window.location.href = `maps://?q=${encodedQuery}`;
-  } else if (isAndroid) {
-    window.location.href = `geo:0,0?q=${encodedQuery}`;
-  } else {
-    window.open(`https://www.google.com/maps/search/?api=1&query=${encodedQuery}`, '_blank');
-  }
+  window.location.href = url;
 }
 
 // =========================================================
@@ -765,7 +778,7 @@ function shareRecord() {
     r.spot_number ? `🔢 車位：${r.spot_number}` : null,
     r.notes ? `📝 備註：${r.notes}` : null,
     `⏰ 停放時間：${formatDatetime(r.parked_at)}`,
-    `\n（由「停車小幫手」分享）`
+    `\n（由「定位小幫手」分享）`
   ].filter(Boolean).join('\n');
 
   if (navigator.share) {

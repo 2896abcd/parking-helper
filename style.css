@@ -133,23 +133,26 @@ img { max-width: 100%; display: block; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
 
 /* =========================================================
-   首頁：停車 / 找車
+   首頁：停車定位 / 找車導航
    ========================================================= */
 #screen-home.screen.active {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   min-height: 100dvh;
-  padding: 0;
+  padding: max(28px, env(safe-area-inset-top)) 20px max(32px, env(safe-area-inset-bottom));
+  gap: 42px;
 }
 .home-title {
   width: 100%;
   margin: 0;
-  padding: max(28px, env(safe-area-inset-top)) 16px 0;
+  padding: 0;
   text-align: center;
-  font-size: 1.35rem;
+  font-size: clamp(1.6rem, 6.4vw, 1.9rem);
   font-weight: 900;
-  letter-spacing: .06em;
+  letter-spacing: .14em;
+  line-height: 1.25;
   color: var(--text-primary);
 }
 .gate {
@@ -158,31 +161,59 @@ img { max-width: 100%; display: block; }
   flex-direction: row;
   justify-content: center;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   box-sizing: border-box;
-  padding: 36px 16px max(28px, env(safe-area-inset-bottom));
+  padding: 0;
 }
 .gate-btn {
   flex: 0 0 auto;
-  width: min(38vw, 156px);
-  height: min(38vw, 156px);
+  width: min(40vw, 168px);
+  height: min(40vw, 168px);
   aspect-ratio: 1;
   border: none;
-  border-radius: 18px;
+  border-radius: 22px;
   color: #fff;
   cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  gap: 11px;
+  padding: 16px 10px;
+  box-shadow: 0 12px 28px rgba(30, 27, 75, .16);
   -webkit-tap-highlight-color: transparent;
 }
-.gate-label {
-  font-size: clamp(1.25rem, 5.4vw, 1.6rem);
+.gate-label,
+.gate-sub,
+.gate-status {
+  display: block;
+  max-width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+.gate-label,
+.gate-status {
+  font-size: clamp(1.02rem, 4.5vw, 1.22rem);
   font-weight: 900;
   letter-spacing: .04em;
-  line-height: 1.2;
 }
+.gate-sub {
+  font-size: clamp(.92rem, 3.9vw, 1.05rem);
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.gate-rule {
+  width: 74%;
+  height: 1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, .62);
+}
+.gate-status { display: none; }
+.gate-btn.is-locating .gate-label,
+.gate-btn.is-locating .gate-sub,
+.gate-btn.is-locating .gate-rule { display: none; }
+.gate-btn.is-locating .gate-status { display: block; }
 .gate-park { background: #4f46e5; }
 .gate-find { background: #0284c7; }
 .gate-btn:active { filter: brightness(.92); }
