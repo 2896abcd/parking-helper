@@ -23,6 +23,7 @@ const STATE = {
   distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
   floorPromptId: null,      // 剛存好、等樓層的紀錄 id
   parkSeq: 0,               // 停車定位序號；取消後舊的 GPS 回呼作廢
+  navStartSpoken: false,    // 已用目前距離講過開場，避免和 30 公尺提示疊在一起
 };
 
 const STORE_KEY = 'parking_records';
@@ -1128,10 +1129,11 @@ function startNavMode() {
 
   STATE.navMode = true;
   STATE.voiceInside = false;
+  STATE.navStartSpoken = false;
   STATE.navGeoErrorShown = false;
   bindSpeechVoices();
-  // 在點擊當下先講一句，解鎖 iOS 之後的 30 公尺提醒
-  unlockSpeech();
+  // 點擊當下先開口，之後的 30 公尺提醒才不會被 iOS 擋住
+  announceNavStart(record, readShownMeters());
 
   const panel = document.getElementById('nav-panel');
   const card = document.getElementById('nav-panel-card');
@@ -1151,7 +1153,8 @@ function startNavMode() {
       if (!hasCoords(STATE.currentRecord)) return;
       const meters = applyDistance(STATE.currentRecord, pos);
       updateNavPanel(meters);
-      maybeAnnounceArrival(meters);
+      if (!STATE.navStartSpoken) announceNavStart(STATE.currentRecord, meters);
+      else maybeAnnounceArrival(meters);
     },
     (err) => {
       if (!STATE.navMode) return;
@@ -1180,6 +1183,7 @@ function stopNavMode(opts) {
   STATE.watchId = null;
   STATE.navMode = false;
   STATE.voiceInside = false;
+  STATE.navStartSpoken = false;
 
   const panel = document.getElementById('nav-panel');
   if (panel) panel.classList.add('hidden');
@@ -1246,15 +1250,79 @@ function pickZhVoice() {
     || null;
 }
 
-function unlockSpeech() {
-  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+function readShownMeters() {
+  const row = document.getElementById('card-distance-row');
+  const el = document.getElementById('card-distance');
+  if (!row || !el || row.classList.contains('hidden')) return null;
+  const raw = String(el.textContent || '');
+  const km = raw.match(/([\d.]+)\s*公里/);
+  if (km) {
+    const n = Number(km[1]);
+    return Number.isFinite(n) ? n * 1000 : null;
+  }
+  const meters = raw.match(/(\d+)\s*公尺/);
+  if (!meters) return null;
+  const n = Number(meters[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** B3 →「B 3」，212 →「2 1 2」，讓中文語音把代號一個一個念清楚。 */
+function speakablePlaceCode(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  return text
+    .replace(/([A-Za-z])(?=[0-9A-Za-z])/g, '$1 ')
+    .replace(/([0-9])(?=[0-9])/g, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function navPlaceSpeech(record) {
+  if (!record) return '';
+  const floor = record.floor ? String(record.floor).trim() : '';
+  const spot = record.spot_number ? String(record.spot_number).trim() : '';
+  const parts = [];
+  if (floor) parts.push('樓層 ' + speakablePlaceCode(floor));
+  if (spot) parts.push('車位 ' + speakablePlaceCode(spot));
+  return parts.join('，');
+}
+
+function navStartSpeech(record, meters) {
+  const parts = [];
+  if (Number.isFinite(meters) && meters >= 0) {
+    parts.push('距離約 ' + Math.max(1, Math.round(meters)) + ' 公尺');
+  }
+  const place = navPlaceSpeech(record);
+  if (place) parts.push(place);
+  return parts.join('，');
+}
+
+function speakNav(text) {
+  if (!text) return;
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    showToast('🔊 ' + text, 'success', 4000);
+    return;
+  }
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'zh-TW';
+  const voice = pickZhVoice();
+  if (voice) utter.voice = voice;
+  utter.rate = 0.95;
   try {
-    const utter = new SpeechSynthesisUtterance('導航開始');
-    utter.lang = 'zh-TW';
-    const voice = pickZhVoice();
-    if (voice) utter.voice = voice;
     speechSynthesis.speak(utter);
-  } catch (err) { /* 不支援語音時略過 */ }
+  } catch (err) {
+    showToast('🔊 ' + text, 'success', 4000);
+  }
+}
+
+function announceNavStart(record, meters) {
+  const hasMeters = Number.isFinite(meters) && meters >= 0;
+  // 還沒有距離時只先解鎖語音；等第一次定位再一次講完距離和樓層車位
+  speakNav(hasMeters ? (navStartSpeech(record, meters) || '導航開始') : '導航開始');
+  if (!hasMeters) return;
+  STATE.navStartSpoken = true;
+  STATE.lastVoiceAt = Date.now();
+  if (meters <= ARRIVAL_METERS) STATE.voiceInside = true;
 }
 
 function speakNearby(meters) {
