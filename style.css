@@ -856,7 +856,7 @@ img { max-width: 100%; display: block; }
   font-size: 1.35rem;
   font-weight: 700;
 }
-#input-park-spot { margin-bottom: 16px; }
+#input-park-meetup { margin-bottom: 16px; }
 .modal-box p.floor-hint {
   font-size: .8rem;
   color: var(--text-muted);
@@ -931,7 +931,8 @@ img { max-width: 100%; display: block; }
   margin: 4px 0 8px;
 }
 .nav-floor,
-.nav-spot {
+.nav-spot,
+.nav-meetup {
   text-align: center;
   font-size: clamp(1.7rem, 7.2vw, 2.05rem);
   font-weight: 800;

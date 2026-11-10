@@ -134,6 +134,13 @@
                 <span class="info-value" id="card-spot">—</span>
               </div>
             </div>
+            <div class="info-item hidden">
+              <i class="fas fa-clock"></i>
+              <div>
+                <span class="info-label">集合時間</span>
+                <span class="info-value" id="card-meetup">—</span>
+              </div>
+            </div>
           </div>
 
           <!-- 停放時間 -->
@@ -408,6 +415,7 @@
       <div class="nav-distance" id="nav-distance">定位中...</div>
       <p id="nav-floor" class="nav-floor hidden"></p>
       <p id="nav-spot" class="nav-spot hidden"></p>
+      <p id="nav-meetup" class="nav-meetup hidden"></p>
       <p class="nav-hint" id="nav-hint">接近 30 公尺時會以語音提醒</p>
       <div class="nav-panel-actions">
         <button type="button" class="btn btn-navigate btn-full" onclick="openNavigation()">
@@ -431,6 +439,8 @@
         <p class="floor-hint">3 會記成 3F，B2 或 -2 會記成 B2</p>
         <label class="form-label" for="input-park-spot">車位編號</label>
         <input id="input-park-spot" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="20" placeholder="例：A12，可留空" />
+        <label class="form-label" for="input-park-meetup">集合時間</label>
+        <input id="input-park-meetup" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="10" placeholder="用24小時制輸入" />
         <div class="modal-actions floor-actions">
           <button type="submit" class="btn btn-primary">記下樓層</button>
           <button type="button" class="btn btn-secondary" onclick="skipFloorPrompt()">戶外，不用樓層</button>

@@ -92,6 +92,41 @@ function normalizeSpot(raw) {
   return String(raw || '').trim();
 }
 
+/** 集合時間：接受 14:30、1430、9:05 等，合理者正規成 HH:MM。空字串代表沒填。無法辨識則 ok 為 false。 */
+function normalizeMeetupTime(raw) {
+  const text = String(raw || '').trim().replace(/\s+/g, '').replace(/：/g, ':');
+  if (!text) return { ok: true, value: '' };
+
+  let hours;
+  let minutes;
+  let match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (match) {
+    hours = Number(match[1]);
+    minutes = Number(match[2]);
+  } else if (/^\d{3,4}$/.test(text)) {
+    const padded = text.padStart(4, '0');
+    hours = Number(padded.slice(0, 2));
+    minutes = Number(padded.slice(2, 4));
+  } else if (/^\d{1,2}$/.test(text)) {
+    hours = Number(text);
+    minutes = 0;
+  } else {
+    return { ok: false, value: '' };
+  }
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return { ok: false, value: '' };
+  }
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  return { ok: true, value: hh + ':' + mm };
+}
+
+function readMeetupTimeInput() {
+  const el = document.getElementById('input-park-meetup');
+  return normalizeMeetupTime(el ? el.value : '');
+}
+
 const ARRIVAL_METERS = 30;
 const VOICE_COOLDOWN_MS = 45000;
 const VOICE_EXIT_METERS = 38;
@@ -289,6 +324,7 @@ async function parkHere() {
       floor: '',
       zone: '',
       spot_number: '',
+      meetup_time: '',
       notes: '',
       photo_url: '',
       latitude: pos.coords.latitude,
@@ -317,8 +353,10 @@ function openFloorPrompt(id) {
   STATE.floorPromptId = id;
   const input = document.getElementById('input-park-floor');
   const spotInput = document.getElementById('input-park-spot');
+  const meetupInput = document.getElementById('input-park-meetup');
   input.value = '';
   if (spotInput) spotInput.value = '';
+  if (meetupInput) meetupInput.value = '';
   document.getElementById('floor-modal').classList.remove('hidden');
   input.focus();
 }
@@ -378,15 +416,20 @@ function confirmCancelLocation() {
   showToast(removed ? '已取消目前定位' : '目前沒有已存的定位', 'info');
 }
 
-/** 戶外或關掉視窗：樓層與車位都不記。 */
+/** 戶外或關掉視窗：樓層與車位都不記；已填且可辨識的集合時間仍會留下。 */
 function skipFloorPrompt() {
   const id = STATE.floorPromptId;
   if (id) {
     try {
-      patchRecord(id, { floor: '', spot_number: '' });
+      const meetup = readMeetupTimeInput();
+      patchRecord(id, { floor: '', spot_number: '', meetup_time: meetup.value });
       if (STATE.currentRecord && STATE.currentRecord.id === id) {
         STATE.currentRecord.floor = '';
         STATE.currentRecord.spot_number = '';
+        STATE.currentRecord.meetup_time = meetup.value;
+      }
+      if (!meetup.ok) {
+        showToast('集合時間看不懂，已先留空。可用 14:30 或 1430', 'info');
       }
     } catch (err) {
       console.error(err);
@@ -402,6 +445,7 @@ function saveFloorPrompt(e) {
   const id = STATE.floorPromptId;
   const floor = normalizeFloor(document.getElementById('input-park-floor').value);
   const spot = normalizeSpot(document.getElementById('input-park-spot').value);
+  const meetup = readMeetupTimeInput();
   if (!id) {
     closeFloorPrompt();
     return;
@@ -411,13 +455,17 @@ function saveFloorPrompt(e) {
     return;
   }
   try {
-    patchRecord(id, { floor: floor, spot_number: spot });
+    patchRecord(id, { floor: floor, spot_number: spot, meetup_time: meetup.value });
     if (STATE.currentRecord && STATE.currentRecord.id === id) {
       STATE.currentRecord.floor = floor;
       STATE.currentRecord.spot_number = spot;
+      STATE.currentRecord.meetup_time = meetup.value;
     }
     closeFloorPrompt();
-    showToast(spot ? '✅ 已記下 ' + floor + '，車位 ' + spot : '✅ 已記下 ' + floor, 'success');
+    let msg = spot ? '✅ 已記下 ' + floor + '，車位 ' + spot : '✅ 已記下 ' + floor;
+    if (meetup.value) msg += '，集合時間 ' + meetup.value;
+    if (!meetup.ok) msg += '。集合時間看不懂，已先留空（可用 14:30 或 1430）';
+    showToast(msg, meetup.ok ? 'success' : 'info');
   } catch (err) {
     console.error(err);
     showToast('❌ 儲存失敗，請重試', 'error');
@@ -439,8 +487,10 @@ function showNavLine(id, text) {
 function showNavFloor(record) {
   const floor = record && record.floor ? String(record.floor).trim() : '';
   const spot = record && record.spot_number ? String(record.spot_number).trim() : '';
+  const meetup = record && record.meetup_time ? String(record.meetup_time).trim() : '';
   showNavLine('nav-floor', floor ? '樓層 ' + floor : '');
   showNavLine('nav-spot', spot ? '車位 ' + spot : '');
+  showNavLine('nav-meetup', meetup ? '集合時間 ' + meetup : '');
 }
 
 /** 找車：開啟已存位置、距離與語音導航 */
@@ -528,6 +578,7 @@ function renderCurrentCard(r) {
   setCardInfo('card-floor', r.floor);
   setCardInfo('card-zone', r.zone);
   setCardInfo('card-spot', r.spot_number);
+  setCardInfo('card-meetup', r.meetup_time);
   const infoGrid = document.querySelector('#current-car-card .card-info-grid');
   if (infoGrid) {
     const anyInfo = [...infoGrid.querySelectorAll('.info-item')].some(el => !el.classList.contains('hidden'));
