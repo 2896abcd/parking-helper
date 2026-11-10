@@ -856,6 +856,7 @@ img { max-width: 100%; display: block; }
   font-size: 1.35rem;
   font-weight: 700;
 }
+#input-park-spot,
 #input-park-meetup { margin-bottom: 16px; }
 .modal-box p.floor-hint {
   font-size: .8rem;
