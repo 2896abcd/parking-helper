@@ -441,12 +441,20 @@
         <input id="input-park-spot" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="20" placeholder="例：A12，可留空" />
         <label class="form-label" for="input-park-meetup">集合時間</label>
         <input id="input-park-meetup" class="form-input floor-input" type="text" inputmode="text" autocomplete="off" maxlength="10" placeholder="用24小時制輸入" />
+        <p class="floor-hint">集合前15分鐘會自動開始導航回車位（請保持此頁開啟）</p>
         <div class="modal-actions floor-actions">
           <button type="submit" class="btn btn-primary">記下樓層</button>
           <button type="button" class="btn btn-secondary" onclick="skipFloorPrompt()">戶外，不用樓層</button>
         </div>
       </form>
     </div>
+  </div>
+
+  <!-- ===================== 集合前 15 分鐘 ===================== -->
+  <div id="meetup-banner" class="meetup-banner hidden" role="status">
+    <p id="meetup-banner-text"></p>
+    <button type="button" id="meetup-banner-nav" class="btn btn-primary btn-full hidden" onclick="startMeetupReturnNav()">開始導航回車位</button>
+    <a id="meetup-banner-gmaps" class="btn btn-secondary btn-full hidden" target="_blank" rel="noopener noreferrer">用 Google 地圖導航</a>
   </div>
 
   <!-- ===================== Toast 通知 ===================== -->

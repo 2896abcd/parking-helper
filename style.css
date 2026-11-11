@@ -856,8 +856,7 @@ img { max-width: 100%; display: block; }
   font-size: 1.35rem;
   font-weight: 700;
 }
-#input-park-spot,
-#input-park-meetup { margin-bottom: 16px; }
+#input-park-spot { margin-bottom: 16px; }
 .modal-box p.floor-hint {
   font-size: .8rem;
   color: var(--text-muted);
@@ -956,6 +955,30 @@ img { max-width: 100%; display: block; }
   margin-bottom: 18px;
 }
 .nav-panel-actions { display: flex; flex-direction: column; gap: 10px; }
+
+.meetup-banner {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(430px, calc(100% - 20px));
+  z-index: 270;
+  background: #fff;
+  color: #1e1b4b;
+  border-radius: 16px;
+  padding: 14px 14px 12px;
+  box-shadow: 0 12px 36px rgba(30, 27, 75, .22);
+}
+.meetup-banner p {
+  margin: 0 0 10px;
+  font-size: .95rem;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+}
+.meetup-banner .btn { width: 100%; min-height: 48px; margin-top: 8px; }
+.meetup-banner a.btn { text-decoration: none; }
+#meetup-banner-nav { font-size: 1.05rem; }
 
 /* =========================================================
    LIGHTBOX

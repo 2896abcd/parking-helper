@@ -240,3 +240,159 @@ describe('meetup time in the parking modal and find-car card', () => {
     }
   });
 });
+
+function loadReminder() {
+  const code = [
+    extractFunction('planMeetupReminder'),
+    extractFunction('meetupReminderKey'),
+    extractFunction('meetupNavChoice'),
+    extractFunction('createMeetupScheduler'),
+    extractFunction('parseCoord'),
+    extractFunction('buildWalkingNavUrl'),
+    extractFunction('meetupGoogleMapsUrl'),
+    'this.planMeetupReminder = planMeetupReminder;',
+    'this.meetupReminderKey = meetupReminderKey;',
+    'this.meetupNavChoice = meetupNavChoice;',
+    'this.createMeetupScheduler = createMeetupScheduler;',
+    'this.meetupGoogleMapsUrl = meetupGoogleMapsUrl;',
+  ].join('\n');
+  const ctx = {};
+  vm.runInNewContext(code, ctx);
+  return ctx;
+}
+
+const reminder = loadReminder();
+
+function at(y, m, d, h, min) {
+  return new Date(y, m - 1, d, h, min, 0, 0).getTime();
+}
+
+describe('meetup reminder schedule', () => {
+  test('schedules 15 minutes before a later meetup today', () => {
+    const plan = reminder.planMeetupReminder('14:30', at(2026, 11, 11, 14, 0));
+    assert.equal(plan.fireNow, false);
+    assert.equal(plan.delayMs, 15 * 60 * 1000);
+    assert.equal(new Date(plan.meetupAt).getHours(), 14);
+    assert.equal(new Date(plan.meetupAt).getMinutes(), 30);
+  });
+
+  test('fires immediately inside the 15-minute window', () => {
+    const plan = reminder.planMeetupReminder('14:30', at(2026, 11, 11, 14, 20));
+    assert.equal(plan.fireNow, true);
+    assert.ok(plan.remindAt <= at(2026, 11, 11, 14, 20));
+    assert.ok(plan.meetupAt > at(2026, 11, 11, 14, 20));
+  });
+
+  test('skips a meetup that already passed and is not soon again', () => {
+    assert.equal(reminder.planMeetupReminder('09:00', at(2026, 11, 11, 10, 0)), null);
+  });
+
+  test('uses tomorrow when that next time is still soon', () => {
+    const plan = reminder.planMeetupReminder('00:10', at(2026, 11, 11, 23, 50));
+    assert.equal(plan.fireNow, false);
+    assert.equal(plan.delayMs, 5 * 60 * 1000);
+    assert.equal(new Date(plan.meetupAt).getDate(), 12);
+  });
+
+  test('fires now when tomorrow is soon and the lead time already started', () => {
+    const plan = reminder.planMeetupReminder('00:10', at(2026, 11, 11, 23, 58));
+    assert.equal(plan.fireNow, true);
+  });
+});
+
+describe('meetup reminder timer', () => {
+  function harness(record) {
+    const clock = { now: at(2026, 11, 11, 14, 0) };
+    let fired = '';
+    const pending = [];
+    const events = [];
+    const active = { current: record };
+    const scheduler = reminder.createMeetupScheduler({
+      now: () => clock.now,
+      setTimeout(fn, ms) {
+        const item = { fn, ms, cleared: false };
+        pending.push(item);
+        return item;
+      },
+      clearTimeout(item) { if (item) item.cleared = true; },
+      getActive: () => active.current,
+      getFired: () => fired,
+      setFired: (key) => { fired = key; },
+      onFire: (current) => { events.push(current.meetup_time); },
+    });
+    return {
+      clock, pending, events, active, scheduler,
+      flush() {
+        const due = pending.filter((item) => !item.cleared);
+        pending.length = 0;
+        due.forEach((item) => item.fn());
+      },
+    };
+  }
+
+  test('fires once on the fake timer and not again', () => {
+    const box = harness({ id: 'rec-1', meetup_time: '14:30' });
+    assert.equal(box.scheduler.sync(), 'scheduled');
+    assert.equal(box.pending.length, 1);
+    assert.equal(box.pending[0].ms, 15 * 60 * 1000);
+    box.clock.now = at(2026, 11, 11, 14, 15);
+    box.flush();
+    assert.deepEqual(box.events, ['14:30']);
+    assert.equal(box.scheduler.sync(), 'already');
+    assert.equal(box.pending.length, 0);
+  });
+
+  test('cancel clears the timer so it does not fire', () => {
+    const box = harness({ id: 'rec-1', meetup_time: '14:30' });
+    box.scheduler.sync();
+    box.scheduler.clear();
+    box.flush();
+    assert.deepEqual(box.events, []);
+  });
+
+  test('changing meetup_time drops the old timer', () => {
+    const box = harness({ id: 'rec-1', meetup_time: '14:30' });
+    box.scheduler.sync();
+    box.active.current = { id: 'rec-1', meetup_time: '16:00' };
+    box.flush();
+    assert.deepEqual(box.events, []);
+    box.clock.now = at(2026, 11, 11, 15, 0);
+    assert.equal(box.scheduler.sync(), 'scheduled');
+    assert.equal(box.pending.filter((item) => !item.cleared).at(-1).ms, 45 * 60 * 1000);
+  });
+});
+
+describe('meetup navigation choice', () => {
+  test('stays quiet when find-car navigation is already open', () => {
+    assert.equal(reminder.meetupNavChoice({
+      screen: 'find', navMode: true, hasCoords: true, permission: 'granted',
+    }), 'banner-only');
+  });
+
+  test('asks for a tap when location permission needs a gesture', () => {
+    assert.equal(reminder.meetupNavChoice({
+      screen: 'home', navMode: false, hasCoords: true, permission: 'prompt',
+    }), 'need-tap');
+    assert.equal(reminder.meetupNavChoice({
+      screen: 'home', navMode: false, hasCoords: false, permission: 'granted',
+    }), 'need-tap');
+  });
+
+  test('auto-starts navigation on the same page when it can', () => {
+    assert.equal(reminder.meetupNavChoice({
+      screen: 'home', navMode: false, hasCoords: true, permission: 'granted',
+    }), 'auto-nav');
+  });
+
+  test('google maps link is walking and is not opened by itself', () => {
+    const url = reminder.meetupGoogleMapsUrl({ latitude: 25.03, longitude: 121.56 });
+    assert.equal(url, 'https://www.google.com/maps/dir/?api=1&destination=25.03,121.56&travelmode=walking');
+    assert.match(htmlSource, /集合前15分鐘會自動開始導航回車位（請保持此頁開啟）/);
+    assert.match(htmlSource, /開始導航回車位/);
+    assert.match(htmlSource, /用 Google 地圖導航/);
+    const deliverStart = appSource.indexOf('async function deliverMeetupReminder');
+    const deliverBody = appSource.slice(deliverStart, appSource.indexOf('\nfunction ', deliverStart));
+    assert.doesNotMatch(deliverBody, /speakNav|speechSynthesis/);
+    assert.match(appSource, /關掉分頁或鎖屏後/);
+  });
+});
