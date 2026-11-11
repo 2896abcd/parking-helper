@@ -22,6 +22,9 @@ const STATE = {
   voicesBound: false,
   distanceForId: null,      // 已顯示距離的記錄，避免刷新時閃成「計算中」
   floorPromptId: null,      // 剛存好、等樓層的紀錄 id
+  parkSeq: 0,               // 停車定位序號；取消後舊的 GPS 回呼作廢
+  navStartSpoken: false,    // 已用目前距離講過開場，避免和 30 公尺提示疊在一起
+  meetupWantedAutoNav: false,
 };
 
 const STORE_KEY = 'parking_records';
@@ -88,6 +91,123 @@ function normalizeFloor(raw) {
 /** 車位編號只去前後空白，內容原樣保留。空字串代表沒填。 */
 function normalizeSpot(raw) {
   return String(raw || '').trim();
+}
+
+/** 集合時間：接受 14:30、1430、9:05 等，合理者正規成 HH:MM。空字串代表沒填。無法辨識則 ok 為 false。 */
+function normalizeMeetupTime(raw) {
+  const text = String(raw || '').trim().replace(/\s+/g, '').replace(/：/g, ':');
+  if (!text) return { ok: true, value: '' };
+
+  let hours;
+  let minutes;
+  let match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (match) {
+    hours = Number(match[1]);
+    minutes = Number(match[2]);
+  } else if (/^\d{3,4}$/.test(text)) {
+    const padded = text.padStart(4, '0');
+    hours = Number(padded.slice(0, 2));
+    minutes = Number(padded.slice(2, 4));
+  } else if (/^\d{1,2}$/.test(text)) {
+    hours = Number(text);
+    minutes = 0;
+  } else {
+    return { ok: false, value: '' };
+  }
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return { ok: false, value: '' };
+  }
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  return { ok: true, value: hh + ':' + mm };
+}
+
+function readMeetupTimeInput() {
+  const el = document.getElementById('input-park-meetup');
+  return normalizeMeetupTime(el ? el.value : '');
+}
+
+/**
+ * 集合前 15 分鐘的導航只在這個分頁還開著、手機沒鎖螢幕時才會發生。
+ * 關掉分頁或鎖屏後，瀏覽器不會在背景自動打開導航，也不會震動。
+ * 今天的集合時間若已過，只有下一次距現在 18 小時內才改排明天，否則略過。
+ */
+function planMeetupReminder(hhmm, nowMs) {
+  const leadMs = 15 * 60 * 1000;
+  const nextDayMaxMs = 18 * 60 * 60 * 1000;
+  const match = String(hhmm || '').match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  const now = new Date(nowMs);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0);
+  let meetupAt = today.getTime();
+  if (nowMs >= meetupAt) {
+    const next = new Date(today);
+    next.setDate(next.getDate() + 1);
+    if (next.getTime() - nowMs > nextDayMaxMs) return null;
+    meetupAt = next.getTime();
+  }
+  const remindAt = meetupAt - leadMs;
+  if (nowMs >= remindAt) return { meetupAt: meetupAt, remindAt: remindAt, fireNow: true, delayMs: 0 };
+  return { meetupAt: meetupAt, remindAt: remindAt, fireNow: false, delayMs: remindAt - nowMs };
+}
+
+function meetupReminderKey(record, meetupAt) {
+  return record.id + '|' + meetupAt;
+}
+
+/** granted/unknown 且有座標、人還不在導航中，才自動進入找車。 */
+function meetupNavChoice(state) {
+  if (state.screen === 'find' && state.navMode) return 'banner-only';
+  if (!state.hasCoords) return 'need-tap';
+  if (state.permission === 'prompt' || state.permission === 'denied' || state.permission === 'missing') return 'need-tap';
+  return 'auto-nav';
+}
+
+function createMeetupScheduler(deps) {
+  let timer = null;
+  function clear() {
+    if (timer != null) {
+      deps.clearTimeout(timer);
+      timer = null;
+    }
+  }
+  function fire(record, plan) {
+    const current = deps.getActive();
+    if (!current || current.id !== record.id || current.meetup_time !== record.meetup_time) return false;
+    const key = meetupReminderKey(current, plan.meetupAt);
+    if (deps.getFired() === key) return false;
+    deps.setFired(key);
+    deps.onFire(current, plan);
+    return true;
+  }
+  function sync() {
+    clear();
+    const record = deps.getActive();
+    if (!record || !String(record.meetup_time || '').trim()) return 'none';
+    const plan = planMeetupReminder(record.meetup_time, deps.now());
+    if (!plan) return 'skip';
+    if (deps.getFired() === meetupReminderKey(record, plan.meetupAt)) return 'already';
+    if (plan.fireNow) {
+      fire(record, plan);
+      return 'now';
+    }
+    const scheduledId = record.id;
+    const scheduledTime = record.meetup_time;
+    timer = deps.setTimeout(() => {
+      timer = null;
+      const current = deps.getActive();
+      if (!current || current.id !== scheduledId || current.meetup_time !== scheduledTime) return;
+      const latest = planMeetupReminder(current.meetup_time, deps.now());
+      if (!latest) return;
+      fire(current, latest);
+    }, plan.delayMs);
+    return 'scheduled';
+  }
+  return { clear: clear, sync: sync };
 }
 
 const ARRIVAL_METERS = 30;
@@ -253,6 +373,7 @@ async function parkHere() {
 
   const btn = document.getElementById('btn-park');
   if (btn.disabled) return;
+  const ticket = ++STATE.parkSeq;
   btn.disabled = true;
   btn.classList.add('is-locating');
 
@@ -260,7 +381,14 @@ async function parkHere() {
   try {
     pos = await readParkPosition();
   } catch (err) {
-    showToast(geoErrorMessage(err), 'warning');
+    if (ticket === STATE.parkSeq) showToast(geoErrorMessage(err), 'warning');
+  }
+
+  if (ticket !== STATE.parkSeq) {
+    btn.disabled = false;
+    btn.classList.remove('is-locating');
+    syncCancelLocationButton();
+    return;
   }
 
   if (!pos) {
@@ -271,6 +399,7 @@ async function parkHere() {
 
   try {
     await deactivateAll();
+    if (ticket !== STATE.parkSeq) return;
     const payload = {
       vehicle_type: 'car',
       license_plate: '',
@@ -278,6 +407,7 @@ async function parkHere() {
       floor: '',
       zone: '',
       spot_number: '',
+      meetup_time: '',
       notes: '',
       photo_url: '',
       latitude: pos.coords.latitude,
@@ -286,6 +416,10 @@ async function parkHere() {
       is_active: true,
     };
     const saved = createRecord(payload);
+    if (ticket !== STATE.parkSeq) {
+      writeRecords(readRecords().filter(r => r.id !== saved.id));
+      return;
+    }
     showToast('✅ 已記下目前位置', 'success');
     refreshHome();
     openFloorPrompt(saved.id);
@@ -302,8 +436,10 @@ function openFloorPrompt(id) {
   STATE.floorPromptId = id;
   const input = document.getElementById('input-park-floor');
   const spotInput = document.getElementById('input-park-spot');
+  const meetupInput = document.getElementById('input-park-meetup');
   input.value = '';
   if (spotInput) spotInput.value = '';
+  if (meetupInput) meetupInput.value = '';
   document.getElementById('floor-modal').classList.remove('hidden');
   input.focus();
 }
@@ -314,16 +450,72 @@ function closeFloorPrompt() {
   if (modal) modal.classList.add('hidden');
 }
 
-/** 戶外或關掉視窗：樓層與車位都不記。 */
+function hasActiveLocation() {
+  return readRecords().some(isActiveRecord);
+}
+
+function syncCancelLocationButton() {
+  const btn = document.getElementById('btn-cancel-loc');
+  if (!btn) return;
+  const has = hasActiveLocation();
+  btn.disabled = !has;
+  btn.setAttribute('aria-disabled', has ? 'false' : 'true');
+}
+
+function askCancelLocation() {
+  if (!hasActiveLocation()) {
+    syncCancelLocationButton();
+    showToast('目前沒有已存的定位', 'info');
+    return;
+  }
+  document.getElementById('cancel-loc-modal').classList.remove('hidden');
+}
+
+function closeCancelLocation() {
+  const modal = document.getElementById('cancel-loc-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/** 只刪除目前活動定位，其他歷史原樣留下。 */
+function removeActiveLocations() {
+  const records = readRecords();
+  const kept = records.filter(r => !isActiveRecord(r));
+  const removed = records.length - kept.length;
+  if (removed) writeRecords(kept);
+  return removed;
+}
+
+function confirmCancelLocation() {
+  closeCancelLocation();
+  STATE.parkSeq += 1;
+  closeFloorPrompt();
+  stopNavMode({ silent: true });
+  stopHomeDistanceUpdates();
+  stopDurationTimer();
+  const removed = removeActiveLocations();
+  STATE.currentRecord = null;
+  clearMeetupReminder();
+  refreshHome();
+  syncCancelLocationButton();
+  showToast(removed ? '已取消目前定位' : '目前沒有已存的定位', 'info');
+}
+
+/** 戶外或關掉視窗：樓層與車位都不記；已填且可辨識的集合時間仍會留下。 */
 function skipFloorPrompt() {
   const id = STATE.floorPromptId;
   if (id) {
     try {
-      patchRecord(id, { floor: '', spot_number: '' });
+      const meetup = readMeetupTimeInput();
+      patchRecord(id, { floor: '', spot_number: '', meetup_time: meetup.value });
       if (STATE.currentRecord && STATE.currentRecord.id === id) {
         STATE.currentRecord.floor = '';
         STATE.currentRecord.spot_number = '';
+        STATE.currentRecord.meetup_time = meetup.value;
       }
+      if (!meetup.ok) {
+        showToast('集合時間看不懂，已先留空。可用 14:30 或 1430', 'info');
+      }
+      syncMeetupReminder();
     } catch (err) {
       console.error(err);
       showToast('❌ 儲存失敗，請重試', 'error');
@@ -338,6 +530,7 @@ function saveFloorPrompt(e) {
   const id = STATE.floorPromptId;
   const floor = normalizeFloor(document.getElementById('input-park-floor').value);
   const spot = normalizeSpot(document.getElementById('input-park-spot').value);
+  const meetup = readMeetupTimeInput();
   if (!id) {
     closeFloorPrompt();
     return;
@@ -347,13 +540,18 @@ function saveFloorPrompt(e) {
     return;
   }
   try {
-    patchRecord(id, { floor: floor, spot_number: spot });
+    patchRecord(id, { floor: floor, spot_number: spot, meetup_time: meetup.value });
     if (STATE.currentRecord && STATE.currentRecord.id === id) {
       STATE.currentRecord.floor = floor;
       STATE.currentRecord.spot_number = spot;
+      STATE.currentRecord.meetup_time = meetup.value;
     }
     closeFloorPrompt();
-    showToast(spot ? '✅ 已記下 ' + floor + '，車位 ' + spot : '✅ 已記下 ' + floor, 'success');
+    let msg = spot ? '✅ 已記下 ' + floor + '，車位 ' + spot : '✅ 已記下 ' + floor;
+    if (meetup.value) msg += '，集合時間 ' + meetup.value;
+    if (!meetup.ok) msg += '。集合時間看不懂，已先留空（可用 14:30 或 1430）';
+    showToast(msg, meetup.ok ? 'success' : 'info');
+    syncMeetupReminder();
   } catch (err) {
     console.error(err);
     showToast('❌ 儲存失敗，請重試', 'error');
@@ -375,8 +573,10 @@ function showNavLine(id, text) {
 function showNavFloor(record) {
   const floor = record && record.floor ? String(record.floor).trim() : '';
   const spot = record && record.spot_number ? String(record.spot_number).trim() : '';
+  const meetup = record && record.meetup_time ? String(record.meetup_time).trim() : '';
   showNavLine('nav-floor', floor ? '樓層 ' + floor : '');
   showNavLine('nav-spot', spot ? '車位 ' + spot : '');
+  showNavLine('nav-meetup', meetup ? '集合時間 ' + meetup : '');
 }
 
 /** 找車：開啟已存位置、距離與語音導航 */
@@ -439,6 +639,7 @@ async function refreshHome() {
     showPlaceholder();
     stopHomeDistanceUpdates();
   }
+  syncCancelLocationButton();
 }
 
 function showPlaceholder() {
@@ -463,6 +664,7 @@ function renderCurrentCard(r) {
   setCardInfo('card-floor', r.floor);
   setCardInfo('card-zone', r.zone);
   setCardInfo('card-spot', r.spot_number);
+  setCardInfo('card-meetup', r.meetup_time);
   const infoGrid = document.querySelector('#current-car-card .card-info-grid');
   if (infoGrid) {
     const anyInfo = [...infoGrid.querySelectorAll('.info-item')].some(el => !el.classList.contains('hidden'));
@@ -706,6 +908,7 @@ async function markFound() {
     showPlaceholder();
     stopDurationTimer();
     stopHomeDistanceUpdates();
+    syncCancelLocationButton();
   } catch(e) {
     showToast('❌ 更新失敗', 'error');
   }
@@ -744,6 +947,14 @@ function buildWalkingNavUrl(lat, lng, label, platform) {
     return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=walking`;
   }
   return `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=walking`;
+}
+
+function meetupGoogleMapsUrl(record) {
+  if (!record) return '';
+  const lat = parseCoord(record.latitude);
+  const lng = parseCoord(record.longitude);
+  if (lat == null || lng == null) return '';
+  return buildWalkingNavUrl(lat, lng, '定位點', 'web');
 }
 
 function openNavigation() {
@@ -1063,10 +1274,11 @@ function startNavMode() {
 
   STATE.navMode = true;
   STATE.voiceInside = false;
+  STATE.navStartSpoken = false;
   STATE.navGeoErrorShown = false;
   bindSpeechVoices();
-  // 在點擊當下先講一句，解鎖 iOS 之後的 30 公尺提醒
-  unlockSpeech();
+  // 點擊當下先開口，之後的 30 公尺提醒才不會被 iOS 擋住
+  announceNavStart(record, readShownMeters());
 
   const panel = document.getElementById('nav-panel');
   const card = document.getElementById('nav-panel-card');
@@ -1086,7 +1298,8 @@ function startNavMode() {
       if (!hasCoords(STATE.currentRecord)) return;
       const meters = applyDistance(STATE.currentRecord, pos);
       updateNavPanel(meters);
-      maybeAnnounceArrival(meters);
+      if (!STATE.navStartSpoken) announceNavStart(STATE.currentRecord, meters);
+      else maybeAnnounceArrival(meters);
     },
     (err) => {
       if (!STATE.navMode) return;
@@ -1095,6 +1308,10 @@ function startNavMode() {
         showToast(geoErrorMessage(err), 'warning');
         STATE.homeGeoErrorShown = true;
         stopNavMode({ silent: true });
+        if (STATE.meetupWantedAutoNav) {
+          STATE.meetupWantedAutoNav = false;
+          showMeetupBanner(readRecords().find(isActiveRecord) || null, '集合前15分鐘，請點開始導航回車位', true);
+        }
         return;
       }
       if (!STATE.navGeoErrorShown) {
@@ -1115,6 +1332,7 @@ function stopNavMode(opts) {
   STATE.watchId = null;
   STATE.navMode = false;
   STATE.voiceInside = false;
+  STATE.navStartSpoken = false;
 
   const panel = document.getElementById('nav-panel');
   if (panel) panel.classList.add('hidden');
@@ -1150,7 +1368,7 @@ function updateNavPanel(meters) {
 
 /** 進入 30 公尺說一次；離開 38 公尺後才重新武裝，並有冷卻時間 */
 function maybeAnnounceArrival(meters) {
-  if (!STATE.navMode) return;
+  if (!STATE.navMode || !STATE.currentRecord) return;
   if (meters > VOICE_EXIT_METERS) {
     STATE.voiceInside = false;
     return;
@@ -1181,15 +1399,79 @@ function pickZhVoice() {
     || null;
 }
 
-function unlockSpeech() {
-  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+function readShownMeters() {
+  const row = document.getElementById('card-distance-row');
+  const el = document.getElementById('card-distance');
+  if (!row || !el || row.classList.contains('hidden')) return null;
+  const raw = String(el.textContent || '');
+  const km = raw.match(/([\d.]+)\s*公里/);
+  if (km) {
+    const n = Number(km[1]);
+    return Number.isFinite(n) ? n * 1000 : null;
+  }
+  const meters = raw.match(/(\d+)\s*公尺/);
+  if (!meters) return null;
+  const n = Number(meters[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** B3 →「B 3」，212 →「2 1 2」，讓中文語音把代號一個一個念清楚。 */
+function speakablePlaceCode(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  return text
+    .replace(/([A-Za-z])(?=[0-9A-Za-z])/g, '$1 ')
+    .replace(/([0-9])(?=[0-9])/g, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function navPlaceSpeech(record) {
+  if (!record) return '';
+  const floor = record.floor ? String(record.floor).trim() : '';
+  const spot = record.spot_number ? String(record.spot_number).trim() : '';
+  const parts = [];
+  if (floor) parts.push('樓層 ' + speakablePlaceCode(floor));
+  if (spot) parts.push('車位 ' + speakablePlaceCode(spot));
+  return parts.join('，');
+}
+
+function navStartSpeech(record, meters) {
+  const parts = [];
+  if (Number.isFinite(meters) && meters >= 0) {
+    parts.push('距離約 ' + Math.max(1, Math.round(meters)) + ' 公尺');
+  }
+  const place = navPlaceSpeech(record);
+  if (place) parts.push(place);
+  return parts.join('，');
+}
+
+function speakNav(text) {
+  if (!text) return;
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    showToast('🔊 ' + text, 'success', 4000);
+    return;
+  }
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'zh-TW';
+  const voice = pickZhVoice();
+  if (voice) utter.voice = voice;
+  utter.rate = 0.95;
   try {
-    const utter = new SpeechSynthesisUtterance('導航開始');
-    utter.lang = 'zh-TW';
-    const voice = pickZhVoice();
-    if (voice) utter.voice = voice;
     speechSynthesis.speak(utter);
-  } catch (err) { /* 不支援語音時略過 */ }
+  } catch (err) {
+    showToast('🔊 ' + text, 'success', 4000);
+  }
+}
+
+function announceNavStart(record, meters) {
+  const hasMeters = Number.isFinite(meters) && meters >= 0;
+  // 還沒有距離時只先解鎖語音；等第一次定位再一次講完距離和樓層車位
+  speakNav(hasMeters ? (navStartSpeech(record, meters) || '導航開始') : '導航開始');
+  if (!hasMeters) return;
+  STATE.navStartSpoken = true;
+  STATE.lastVoiceAt = Date.now();
+  if (meters <= ARRIVAL_METERS) STATE.voiceInside = true;
 }
 
 function speakNearby(meters) {
@@ -1224,6 +1506,109 @@ function closeLightbox() {
 }
 
 // =========================================================
+// 集合前 15 分鐘：自動進入找車導航（不能在鎖屏或關頁後發生）
+// =========================================================
+
+const MEETUP_REMINDER_FLAG = 'parking_meetup_reminder_fired';
+const MEETUP_BANNER_STARTED = '集合前15分鐘，已開始導航回車位';
+const MEETUP_BANNER_TAP = '集合前15分鐘，請點開始導航回車位';
+
+const meetupScheduler = createMeetupScheduler({
+  now: function () { return Date.now(); },
+  setTimeout: function (fn, ms) { return setTimeout(fn, ms); },
+  clearTimeout: function (id) { clearTimeout(id); },
+  getActive: function () { return readRecords().find(isActiveRecord) || null; },
+  getFired: function () {
+    try { return localStorage.getItem(MEETUP_REMINDER_FLAG) || ''; }
+    catch (err) { return ''; }
+  },
+  setFired: function (key) {
+    try { localStorage.setItem(MEETUP_REMINDER_FLAG, key); } catch (err) {}
+  },
+  onFire: function (record) { deliverMeetupReminder(record); },
+});
+
+function syncMeetupReminder() {
+  const record = readRecords().find(isActiveRecord);
+  if (!record || !String(record.meetup_time || '').trim()) hideMeetupBanner();
+  meetupScheduler.sync();
+}
+
+function clearMeetupReminder() {
+  meetupScheduler.clear();
+  try { localStorage.removeItem(MEETUP_REMINDER_FLAG); } catch (err) {}
+  STATE.meetupWantedAutoNav = false;
+  hideMeetupBanner();
+}
+
+function hideMeetupBanner() {
+  const banner = document.getElementById('meetup-banner');
+  if (banner) banner.classList.add('hidden');
+}
+
+function showMeetupBanner(record, text, showStart) {
+  const banner = document.getElementById('meetup-banner');
+  const textEl = document.getElementById('meetup-banner-text');
+  const startBtn = document.getElementById('meetup-banner-nav');
+  const maps = document.getElementById('meetup-banner-gmaps');
+  if (!banner || !textEl) return;
+  textEl.textContent = text;
+  if (startBtn) startBtn.classList.toggle('hidden', !showStart);
+  if (maps) {
+    const href = meetupGoogleMapsUrl(record);
+    if (href) {
+      maps.href = href;
+      maps.classList.remove('hidden');
+    } else {
+      maps.removeAttribute('href');
+      maps.classList.add('hidden');
+    }
+  }
+  banner.classList.remove('hidden');
+}
+
+function vibrateMeetup() {
+  if (!navigator.vibrate) return;
+  try { navigator.vibrate([180, 80, 180]); } catch (err) {}
+}
+
+async function meetupPermission() {
+  if (!navigator.geolocation) return 'missing';
+  if (!navigator.permissions || !navigator.permissions.query) return 'unknown';
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    return status.state || 'unknown';
+  } catch (err) {
+    return 'unknown';
+  }
+}
+
+async function deliverMeetupReminder(record) {
+  const permission = await meetupPermission();
+  const choice = meetupNavChoice({
+    screen: STATE.currentScreen,
+    navMode: STATE.navMode,
+    hasCoords: hasCoords(record),
+    permission: permission,
+  });
+  const started = choice !== 'need-tap';
+  showMeetupBanner(record, started ? MEETUP_BANNER_STARTED : MEETUP_BANNER_TAP, choice === 'need-tap');
+  vibrateMeetup();
+  if (choice !== 'auto-nav') return;
+  STATE.meetupWantedAutoNav = true;
+  showFind();
+}
+
+function startMeetupReturnNav() {
+  STATE.meetupWantedAutoNav = false;
+  const text = document.getElementById('meetup-banner-text');
+  const startBtn = document.getElementById('meetup-banner-nav');
+  if (text) text.textContent = MEETUP_BANNER_STARTED;
+  if (startBtn) startBtn.classList.add('hidden');
+  showFind();
+}
+
+// =========================================================
 // 初始化
 // =========================================================
 
@@ -1231,6 +1616,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindSpeechVoices();
   showScreen('home');
   refreshHome();
+  syncMeetupReminder();
 
   // 每 30 秒自動刷新首頁
   setInterval(() => {
